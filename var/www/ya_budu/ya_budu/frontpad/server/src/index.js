@@ -11,7 +11,7 @@ const __dirname = path.dirname(__filename);
 
 // Загружаем .env ПЕРЕД импортом db.js
 import dotenv from 'dotenv';
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
 import { v4 as uuidv4 } from 'uuid';
 import moment from 'moment';
