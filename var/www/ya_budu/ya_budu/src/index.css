@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+/* Кастомные стили */
+* {
+  font-family: 'Roboto', sans-serif;
+}
+
+h1, h2, h3, h4, h5, h6, .font-heading {
+  font-family: 'Montserrat', sans-serif;
+}
+
+.bg-brand-yellow {
+  background-color: #FFD700;
+}
+
+.bg-brand-black {
+  background-color: #111111;
+}
+
+.text-brand-yellow {
+  color: #FFD700;
+}
+
+.text-brand-black {
+  color: #111111;
+}
+
+.border-brand-yellow {
+  border-color: #FFD700;
+}
+
+.border-brand-black {
+  border-color: #111111;
+}
+
+.shadow-custom {
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+}
+
+.shadow-custom-lg {
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.2);
+}
+
+.gradient-bg {
+  background: linear-gradient(135deg, #111111 0%, #333333 100%);
+}
+
+.gradient-yellow {
+  background: linear-gradient(135deg, #FFD700 0%, #FFC000 100%);
+}
+
+.hover-lift {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  cursor: pointer;
+}
+
+.hover-lift:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.2);
+}
+
+/* Анимация появления плавающей корзины */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slideIn {
+  animation: slideIn 0.3s ease-out forwards;
+}
+
+/* Анимация появления снизу для PWA баннера */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-up {
+  animation: slideUp 0.4s ease-out forwards;
+}
+
+/* Логотип - круг без фона */
+.logo-transparent {
+  clip-path: circle(45% at 50% 50%);
+  background-color: transparent !important;
+}

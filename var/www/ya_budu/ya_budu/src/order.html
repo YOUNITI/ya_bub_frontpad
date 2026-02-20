@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Оформление заказа | ЯБУДУ</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            font-family: 'Roboto', sans-serif;
+        }
+        h1, h2, h3, h4, h5, h6, .font-heading {
+            font-family: 'Montserrat', sans-serif;
+        }
+        .bg-brand-yellow {
+            background-color: #FFD700;
+        }
+        .bg-brand-black {
+            background-color: #111111;
+        }
+        .text-brand-yellow {
+            color: #FFD700;
+        }
+        .text-brand-black {
+            color: #111111;
+        }
+        .border-brand-yellow {
+            border-color: #FFD700;
+        }
+        .border-brand-black {
+            border-color: #111111;
+        }
+        .shadow-custom {
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+        }
+        .shadow-custom-lg {
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.2);
+        }
+        .gradient-bg {
+            background: linear-gradient(135deg, #111111 0%, #333333 100%);
+        }
+        .gradient-yellow {
+            background: linear-gradient(135deg, #FFD700 0%, #FFC000 100%);
+        }
+        .hover-lift {
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .hover-lift:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.2);
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+    <!-- Навигация -->
+    <header class="bg-brand-black text-white sticky top-0 z-50 shadow-lg">
+        <div class="container mx-auto px-4 py-4">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center">
+                    <a href="index.html" class="bg-brand-yellow text-brand-black p-3 rounded-full mr-3">
+                        <i class="fas fa-hamburger text-2xl"></i>
+                    </a>
+                    <a href="index.html" class="text-3xl font-bold font-heading">
+                        <span class="text-brand-yellow">Я</span>БУДУ
+                    </a>
+                </div>
+
+                <nav class="hidden md:flex space-x-8">
+                    <a href="index.html#hero" class="hover:text-brand-yellow transition-colors font-medium">Главная</a>
+                    <a href="index.html#menu" class="hover:text-brand-yellow transition-colors font-medium">Меню</a>
+                    <a href="index.html#about" class="hover:text-brand-yellow transition-colors font-medium">О нас</a>
+                    <a href="index.html#delivery" class="hover:text-brand-yellow transition-colors font-medium">Доставка</a>
+                    <a href="index.html#contact" class="hover:text-brand-yellow transition-colors font-medium">Контакты</a>
+                </nav>
+
+                <div class="flex items-center space-x-4">
+                    <a href="index.html" class="bg-brand-yellow text-brand-black px-6 py-2 rounded-full font-bold hover:bg-yellow-500 transition-colors">
+                        <i class="fas fa-arrow-left mr-2"></i> Назад
+                    </a>
+                    <button id="mobileMenuBtn" class="md:hidden text-white text-2xl">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Мобильное меню -->
+            <div id="mobileMenu" class="md:hidden mt-4 hidden">
+                <div class="flex flex-col space-y-4 py-4">
+                    <a href="index.html#hero" class="hover:text-brand-yellow transition-colors font-medium py-2">Главная</a>
+                    <a href="index.html#menu" class="hover:text-brand-yellow transition-colors font-medium py-2">Меню</a>
+                    <a href="index.html#about" class="hover:text-brand-yellow transition-colors font-medium py-2">О нас</a>
+                    <a href="index.html#delivery" class="hover:text-brand-yellow transition-colors font-medium py-2">Доставка</a>
+                    <a href="index.html#contact" class="hover:text-brand-yellow transition-colors font-medium py-2">Контакты</a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Секция оформления заказа -->
+    <section class="py-16 bg-white">
+        <div class="container mx-auto px-4">
+            <div class="max-w-4xl mx-auto">
+                <h1 class="text-4xl font-bold text-center mb-4 font-heading">
+                    <span class="text-brand-yellow">Оформление</span> заказа
+                </h1>
+                <p class="text-xl text-center text-gray-600 mb-12">
+                    Заполните форму ниже, и мы свяжемся с вами для подтверждения
+                </p>
+
+                <div class="bg-gray-50 p-8 rounded-3xl shadow-custom">
+                    <form id="orderForm" class="space-y-8">
+                        <!-- Личные данные -->
+                        <div>
+                            <h3 class="text-2xl font-bold mb-6 font-heading">Личные данные</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label class="block text-gray-700 mb-2 font-medium">Ваше имя *</label>
+                                    <input type="text" name="name" class="w-full p-4 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-yellow focus:border-transparent" placeholder="Иван Иванов" required>
+                                </div>
+
+                                <div>
+                                    <label class="block text-gray-700 mb-2 font-medium">Телефон *</label>
+                                    <input type="tel" name="phone" class="w-full p-4 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-yellow focus:border-transparent" placeholder="+7 (XXX) XXX-XX-XX" required>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Адрес доставки -->
+                        <div>
+                            <h3 class="text-2xl font-bold mb-6 font-heading">Адрес доставки</h3>
+                            <div class="space-y-6">
+                                <div>
+                                    <label class="block text-gray-700 mb-2 font-medium">Улица, дом, квартира *</label>
+                                    <input type="text" name="address" class="w-full p-4 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-yellow focus:border-transparent" placeholder="ул. Ленина, д. 10, кв. 5" required>
+                                </div>
+
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div>
+                                        <label class="block text-gray-700 mb-2 font-medium">Подъезд</label>
+                                        <input type="text" name="entrance" class="w-full p-4 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-yellow focus:border-transparent" placeholder="1">
+                                    </div>
+
+                                    <div>
+                                        <label class="block text-gray-700 mb-2 font-medium">Этаж</label>
+                                        <input type="text" name="floor" class="w-full p-4 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-yellow focus:border-transparent" placeholder="5">
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label class="block text-gray-700 mb-2 font-medium">Домофон</label>
+                                    <input type="text" name="intercom" class="w-full p-4 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-yellow focus:border-transparent" placeholder="1234">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Время доставки -->
+                        <div>
+                            <h3 class="text-2xl font-bold mb-6 font-heading">Время доставки</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label class="block text-gray-700 mb-2 font-medium">Когда доставить?</label>
+                                    <select name="deliveryTime" class="w-full p-4 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-yellow focus:border-transparent">
+                                        <option value="asap">Как можно скорее</option>
+                                        <option value="1hour">Через 1 час</option>
+                                        <option value="2hours">Через 2 часа</option>
+                                        <option value="later">Указать время</option>
+                                    </select>
+                                </div>
+
+                                <div id="customTimeDiv" class="hidden">
+                                    <label class="block text-gray-700 mb-2 font-medium">Укажите время</label>
+                                    <input type="time" name="customTime" class="w-full p-4 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-yellow focus:border-transparent">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Способ оплаты -->
+                        <div>
+                            <h3 class="text-2xl font-bold mb-6 font-heading">Способ оплаты</h3>
+                            <div class="space-y-4">
+                                <label class="flex items-center">
+                                    <input type="radio" name="payment" value="cash" class="mr-3" checked>
+                                    <span class="text-gray-700 font-medium">Наличными при получении</span>
+                                </label>
+                                <label class="flex items-center">
+                                    <input type="radio" name="payment" value="card" class="mr-3">
+                                    <span class="text-gray-700 font-medium">Картой при получении</span>
+                                </label>
+                                <label class="flex items-center">
+                                    <input type="radio" name="payment" value="online" class="mr-3">
+                                    <span class="text-gray-700 font-medium">Онлайн оплата</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Комментарий -->
+                        <div>
+                            <label class="block text-gray-700 mb-2 font-medium">Комментарий к заказу</label>
+                            <textarea name="comment" class="w-full p-4 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-yellow focus:border-transparent" rows="4" placeholder="Особые пожелания, аллергии и т.д."></textarea>
+                        </div>
+
+                        <!-- Согласие -->
+                        <div class="flex items-start">
+                            <input type="checkbox" name="agreement" class="mt-1 mr-3" required>
+                            <label class="text-gray-700 text-sm">
+                                Я согласен с <a href="#" class="text-brand-yellow hover:underline">условиями обработки персональных данных</a> и <a href="#" class="text-brand-yellow hover:underline">правилами доставки</a>
+                            </label>
+                        </div>
+
+                        <!-- Корзина -->
+                        <div class="mt-8">
+                            <h3 class="text-2xl font-bold mb-6 font-heading">Ваш заказ</h3>
+                            <div id="cartItemsContainer" class="bg-gray-50 p-6 rounded-2xl mb-6">
+                                <!-- Товары будут загружены из localStorage -->
+                            </div>
+                            <div class="flex justify-between items-center mb-6">
+                                <span class="text-lg font-bold">Итого:</span>
+                                <span id="cartTotal" class="text-2xl font-bold text-brand-yellow">0 ₽</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Кнопка отправки -->
+                        <div class="text-center pt-6">
+                            <button type="submit" class="bg-brand-yellow text-brand-black py-4 px-12 rounded-xl font-bold text-xl hover:bg-yellow-500 transition-colors shadow-custom">
+                                <i class="fas fa-paper-plane mr-2"></i> Оформить заказ
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Футер -->
+    <footer class="bg-brand-black text-white py-12">
+        <div class="container mx-auto px-4">
+            <div class="flex flex-col md:flex-row justify-between items-center">
+                <div class="mb-8 md:mb-0">
+                    <div class="flex items-center mb-4">
+                        <div class="bg-brand-yellow text-brand-black p-3 rounded-full mr-3">
+                            <i class="fas fa-hamburger text-2xl"></i>
+                        </div>
+                        <h2 class="text-3xl font-bold font-heading">
+                            <span class="text-brand-yellow">Я</span>БУДУ
+                        </h2>
+                    </div>
+                    <p class="text-gray-400">
+                        Быстрая доставка вкусного фаст-фуда
+                    </p>
+                </div>
+
+                <div class="flex space-x-6 mb-8 md:mb-0">
+                    <a href="#" class="bg-gray-800 text-white w-12 h-12 rounded-full flex items-center justify-center hover:bg-brand-yellow hover:text-brand-black transition-colors">
+                        <i class="fab fa-vk text-xl"></i>
+                    </a>
+                    <a href="#" class="bg-gray-800 text-white w-12 h-12 rounded-full flex items-center justify-center hover:bg-brand-yellow hover:text-brand-black transition-colors">
+                        <i class="fab fa-telegram text-xl"></i>
+                    </a>
+                    <a href="#" class="bg-gray-800 text-white w-12 h-12 rounded-full flex items-center justify-center hover:bg-brand-yellow hover:text-brand-black transition-colors">
+                        <i class="fab fa-instagram text-xl"></i>
+                    </a>
+                    <a href="#" class="bg-gray-800 text-white w-12 h-12 rounded-full flex items-center justify-center hover:bg-brand-yellow hover:text-brand-black transition-colors">
+                        <i class="fab fa-whatsapp text-xl"></i>
+                    </a>
+                </div>
+
+                <div class="text-center md:text-right">
+                    <p class="text-gray-400 mb-2">© <span id="currentYear">2023</span> ЯБУДУ. Все права защищены.</p>
+                    <p class="text-gray-500 text-sm">Сайт создан с ❤️ для любителей вкусной еды</p>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- JavaScript -->
+    <script>
+        // Мобильное меню
+        const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+        const mobileMenu = document.getElementById('mobileMenu');
+
+        if (mobileMenuBtn && mobileMenu) {
+            mobileMenuBtn.addEventListener('click', function() {
+                mobileMenu.classList.toggle('hidden');
+                const icon = this.querySelector('i');
+                if (icon.classList.contains('fa-bars')) {
+                    icon.classList.remove('fa-bars');
+                    icon.classList.add('fa-times');
+                } else {
+                    icon.classList.remove('fa-times');
+                    icon.classList.add('fa-bars');
+                }
+            });
+
+            // Закрытие меню при клике на ссылку
+            mobileMenu.querySelectorAll('a').forEach(link => {
+                link.addEventListener('click', function() {
+                    mobileMenu.classList.add('hidden');
+                    mobileMenuBtn.querySelector('i').classList.remove('fa-times');
+                    mobileMenuBtn.querySelector('i').classList.add('fa-bars');
+                });
+            });
+        }
+
+        // Обработка формы заказа
+        const orderForm = document.getElementById('orderForm');
+        if (orderForm) {
+            orderForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+
+                const formData = new FormData(this);
+                const name = formData.get('name');
+                const phone = formData.get('phone');
+                const address = formData.get('address');
+
+                // Валидация телефона
+                const phoneRegex = /^(\+7|8)[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}$/;
+                if (!phoneRegex.test(phone.replace(/\s/g, ''))) {
+                    alert('Пожалуйста, введите корректный номер телефона');
+                    return;
+                }
+
+                // Показываем сообщение об успешной отправке
+                const successMessage = document.createElement('div');
+                successMessage.className = 'fixed top-4 right-4 bg-green-500 text-white px-6 py-4 rounded-xl shadow-lg z-50';
+                successMessage.innerHTML = `
+                    <div class="flex items-center">
+                        <i class="fas fa-check-circle text-xl mr-3"></i>
+                        <div>
+                            <strong>Заказ оформлен!</strong>
+                            <div class="text-sm">${name}, мы свяжемся с вами в ближайшее время для подтверждения.</div>
+                        </div>
+                    </div>
+                `;
+
+                document.body.appendChild(successMessage);
+
+                // Очищаем форму
+                this.reset();
+
+                // Удаляем сообщение через 5 секунд
+                setTimeout(() => {
+                    successMessage.remove();
+                }, 5000);
+
+                // Здесь в реальном приложении был бы запрос к серверу
+                console.log('Данные заказа:', {
+                    name,
+                    phone,
+                    address,
+                    entrance: formData.get('entrance'),
+                    floor: formData.get('floor'),
+                    intercom: formData.get('intercom'),
+                    deliveryTime: formData.get('deliveryTime'),
+                    customTime: formData.get('customTime'),
+                    payment: formData.get('payment'),
+                    comment: formData.get('comment')
+                });
+            });
+        }
+
+        // Показ/скрытие поля для указания времени
+        const deliveryTimeSelect = document.querySelector('select[name="deliveryTime"]');
+        const customTimeDiv = document.getElementById('customTimeDiv');
+
+        if (deliveryTimeSelect && customTimeDiv) {
+            deliveryTimeSelect.addEventListener('change', function() {
+                if (this.value === 'later') {
+                    customTimeDiv.classList.remove('hidden');
+                } else {
+                    customTimeDiv.classList.add('hidden');
+                }
+            });
+        }
+
+        // Обновляем год в футере
+        document.getElementById('currentYear').textContent = new Date().getFullYear();
+    </script>
+</body>
+</html>

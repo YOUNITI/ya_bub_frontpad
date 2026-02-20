@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#111111">
+    <title>Нет интернета | ЯБУДУ</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #111111 0%, #1a1a1a 100%);
+            color: #ffffff;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 400px;
+            width: 100%;
+        }
+        
+        .logo {
+            font-size: 100px;
+            margin-bottom: 20px;
+            animation: bounce 2s infinite;
+        }
+        
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+        
+        h1 {
+            font-size: 28px;
+            font-weight: 800;
+            color: #FFD700;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        
+        .subtitle {
+            font-size: 18px;
+            color: #cccccc;
+            margin-bottom: 30px;
+            line-height: 1.5;
+        }
+        
+        .icon-wifi {
+            font-size: 60px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+        
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
+            color: #111111;
+            border: none;
+            padding: 15px 40px;
+            font-size: 16px;
+            font-weight: 700;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin: 10px;
+            text-decoration: none;
+        }
+        
+        .btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(255, 215, 0, 0.3);
+        }
+        
+        .btn:active {
+            transform: translateY(0);
+        }
+        
+        .btn-outline {
+            background: transparent;
+            border: 2px solid #FFD700;
+            color: #FFD700;
+        }
+        
+        .btn-outline:hover {
+            background: #FFD700;
+            color: #111111;
+        }
+        
+        .cached-info {
+            margin-top: 40px;
+            padding: 20px;
+            background: rgba(255, 215, 0, 0.1);
+            border-radius: 15px;
+            border: 1px solid rgba(255, 215, 0, 0.2);
+        }
+        
+        .cached-info h3 {
+            color: #FFD700;
+            font-size: 14px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .cached-info p {
+            color: #aaaaaa;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .cached-info ul {
+            list-style: none;
+            margin-top: 10px;
+        }
+        
+        .cached-info li {
+            color: #FFD700;
+            font-size: 13px;
+            padding: 5px 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background: #ff4444;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .status-indicator.online {
+            background: #44ff44;
+        }
+        
+        footer {
+            position: fixed;
+            bottom: 20px;
+            font-size: 12px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">🍔</div>
+        
+        <div class="icon-wifi">📡❌</div>
+        
+        <h1>Нет интернета</h1>
+        
+        <p class="subtitle">
+            <span class="status-indicator" id="status"></span>
+            Проверьте подключение к Wi-Fi или мобильной сети
+        </p>
+        
+        <button class="btn" onclick="location.reload()">
+            <span>🔄</span> Повторить попытку
+        </button>
+        
+        <a href="/" class="btn btn-outline">
+            <span>🏠</span> На главную
+        </a>
+        
+        <div class="cached-info">
+            <h3>📱 Доступно офлайн</h3>
+            <p>Ранее загруженное меню сохранено и доступно для просмотра без интернета:</p>
+            <ul>
+                <li>✅ Меню блюд</li>
+                <li>✅ Категории</li>
+                <li>✅ Корзина (из localStorage)</li>
+            </ul>
+        </div>
+    </div>
+    
+    <footer>
+        ЯБУДУ © 2024 - Доставка фаст-фуда
+    </footer>
+    
+    <script>
+        // Проверка статуса сети
+        function updateOnlineStatus() {
+            const indicator = document.getElementById('status');
+            if (navigator.onLine) {
+                indicator.classList.add('online');
+                // Автоматическая перезагрузка при появлении сети
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                indicator.classList.remove('online');
+            }
+        }
+        
+        window.addEventListener('online', updateOnlineStatus);
+        window.addEventListener('offline', updateOnlineStatus);
+        
+        // Инициализация
+        updateOnlineStatus();
+        
+        // Проверяем кэш
+        if ('caches' in window) {
+            caches.keys().then(cacheNames => {
+                console.log('Доступные кэши:', cacheNames);
+            });
+        }
+    </script>
+</body>
+</html>

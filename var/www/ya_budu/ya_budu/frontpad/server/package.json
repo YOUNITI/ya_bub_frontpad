@@ -1,0 +1,30 @@
+{
+  "name": "younitipad-server",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "YounitiPad - система управления заказами (миграция на MySQL)",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "migrate": "node migrate_to_mysql.cjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^12.6.2",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.3",
+    "moment": "^2.29.4",
+    "moment-timezone": "^0.6.0",
+    "multer": "^2.0.2",
+    "mysql2": "^3.17.1",
+    "node-fetch": "^3.3.2",
+    "sqlite3": "^5.1.6",
+    "uuid": "^9.0.0",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}

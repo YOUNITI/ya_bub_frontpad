@@ -1,0 +1,37 @@
+# Environment variables (contains sensitive data)
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Database files (contain sensitive data)
+*.db
+*.sqlite
+
+# Uploads directory (contains user-generated content)
+uploads/*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp

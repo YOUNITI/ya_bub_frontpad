@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Генератор иконок ЯБУДУ</title>
+    <style>
+        body {
+            background: #111;
+            color: #FFD700;
+            font-family: 'Montserrat', sans-serif;
+            padding: 20px;
+        }
+        canvas {
+            border: 1px solid #FFD700;
+            margin: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Генератор иконок ЯБУДУ</h1>
+    <p>Откройте консоль (F12) чтобы скачать иконки</p>
+    
+    <script>
+        const sizes = [72, 96, 128, 144, 152, 192, 384, 512];
+        
+        function drawIcon(size) {
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            
+            // Фон
+            ctx.fillStyle = '#111111';
+            ctx.fillRect(0, 0, size, size);
+            
+            // Рамка
+            ctx.strokeStyle = '#FFD700';
+            ctx.lineWidth = size * 0.03;
+            ctx.strokeRect(size * 0.05, size * 0.05, size * 0.9, size * 0.9);
+            
+            // Бургер 🍔
+            ctx.font = `${size * 0.5}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🍔', size / 2, size / 2);
+            
+            // Текст под бургером (только для больших иконок)
+            if (size >= 144) {
+                ctx.fillStyle = '#FFD700';
+                ctx.font = `bold ${size * 0.12}px Montserrat`;
+                ctx.fillText('ЯБУДУ', size / 2, size * 0.85);
+            }
+            
+            document.body.appendChild(canvas);
+            
+            // Скачивание
+            const link = document.createElement('a');
+            link.download = `icon-${size}x${size}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+            
+            return canvas;
+        }
+        
+        sizes.forEach(size => drawIcon(size));
+        console.log('Все иконки созданы и скачаны!');
+    </script>
+</body>
+</html>
