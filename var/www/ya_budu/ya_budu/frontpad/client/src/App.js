@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, NavLink, Navigate } from 'react-router-dom';
-import { LayoutDashboard, ShoppingCart, Package, Tags, Users, BarChart3, ChevronLeft, ChevronRight, Menu, Settings as SettingsIcon, BookOpen, TrendingUp, MessageSquare, Percent, PlusCircle, AlertTriangle, LogOut, Printer } from 'lucide-react';
+import { LayoutDashboard, ShoppingCart, Package, Tags, Users, BarChart3, ChevronLeft, ChevronRight, Menu, Settings as SettingsIcon, BookOpen, TrendingUp, MessageSquare, Percent, PlusCircle, AlertTriangle, LogOut, Printer, MapPin } from 'lucide-react';
 import axios from 'axios';
 import './App.css';
 import { DataProvider } from './context/DataContext';
@@ -59,6 +59,9 @@ const Inventory = React.lazy(() => import('./components/Inventory'));
 const Messenger = React.lazy(() => import('./components/Messenger'));
 const Discounts = React.lazy(() => import('./components/Discounts'));
 const AddonTemplates = React.lazy(() => import('./components/AddonTemplates'));
+const CourierDashboard = React.lazy(() => import('./components/CourierDashboard'));
+const CourierRegistration = React.lazy(() => import('./components/CourierRegistration'));
+const DeliveryZones = React.lazy(() => import('./components/DeliveryZones'));
 
 // Компонент, который использует useAuth
 function AppContent() {
@@ -66,6 +69,7 @@ function AppContent() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [criticalIngredients, setCriticalIngredients] = useState([]);
   const [unreadMessagesCount, setUnreadMessagesCount] = useState(0);
+  const [pendingOrdersCount, setPendingOrdersCount] = useState(0);
   const [showAlert, setShowAlert] = useState(null);
   const [newOrderAlert, setNewOrderAlert] = useState(null);
   const wsRef = useRef(null);
@@ -202,6 +206,7 @@ function AppContent() {
           playNotificationSound('order');
           fetchCriticalIngredients();
           fetchUnreadMessagesCount();
+          fetchPendingOrdersCount(); // Обновляем счётчик заказов
           
           console.log('[App.js new_order] autoPrint:', data.autoPrint, 'order:', data.order?.id);
           
@@ -245,6 +250,7 @@ function AppContent() {
     
     fetchCriticalIngredients();
     fetchUnreadMessagesCount();
+    fetchPendingOrdersCount();
     
     // Слушатель для сброса счётчика сообщений при открытии Messenger
     const handleStorageChange = () => {
@@ -256,10 +262,12 @@ function AppContent() {
     
     window.addEventListener('storage', handleStorageChange);
     window.addEventListener('messenger-opened', fetchUnreadMessagesCount);
+    window.addEventListener('orders-updated', fetchPendingOrdersCount);
     
     return () => {
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('messenger-opened', fetchUnreadMessagesCount);
+      window.removeEventListener('orders-updated', fetchPendingOrdersCount);
     };
   }, [user, isAuthenticated]);
   
@@ -283,6 +291,16 @@ function AppContent() {
     }
   };
 
+  const fetchPendingOrdersCount = async () => {
+    try {
+      const response = await axios.get(`${FRONTPAD_API}/api/orders?status=новый`);
+      const orders = Array.isArray(response.data) ? response.data : [];
+      setPendingOrdersCount(orders.length);
+    } catch (error) {
+      console.error('Ошибка загрузки заказов:', error);
+    }
+  };
+
   // Компонент загрузки
   const LoadingFallback = () => (
     <div className="loading">
@@ -294,6 +312,23 @@ function AppContent() {
   // Если не авторизован - показываем форму входа
   if (!user) {
     return <Login />;
+  }
+
+  // Если курьер - показываем специальный интерфейс
+  if (user.role === 'courier') {
+    return (
+      <DataProvider>
+        <Router>
+          <div className="app courier-mode">
+            <Suspense fallback={<LoadingFallback />}>
+              <Routes>
+                <Route path="/*" element={<CourierDashboard user={user} logout={logout} wsRef={wsRef} />} />
+              </Routes>
+            </Suspense>
+          </div>
+        </Router>
+      </DataProvider>
+    );
   }
 
   return (
@@ -319,6 +354,24 @@ function AppContent() {
               <NavLink to="/orders" className="nav-link">
                 <ShoppingCart size={20} />
                 {!sidebarCollapsed && <span>Заказы</span>}
+                {pendingOrdersCount > 0 && (
+                  <span style={{ 
+                    position: 'absolute', 
+                    right: sidebarCollapsed ? '5px' : '10px',
+                    background: '#ef4444', 
+                    color: 'white', 
+                    borderRadius: '50%', 
+                    width: '20px', 
+                    height: '20px', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center',
+                    fontSize: '12px',
+                    fontWeight: 'bold'
+                  }}>
+                    {pendingOrdersCount}
+                  </span>
+                )}
               </NavLink>
               <NavLink to="/products" className="nav-link">
                 <Package size={20} />
@@ -400,7 +453,15 @@ function AppContent() {
                 <SettingsIcon size={20} />
                 {!sidebarCollapsed && <span>Настройки</span>}
               </NavLink>
-              <button 
+              <NavLink to="/couriers" className="nav-link">
+                <Users size={20} />
+                {!sidebarCollapsed && <span>Курьеры</span>}
+              </NavLink>
+              <NavLink to="/delivery-zones" className="nav-link">
+                <MapPin size={20} />
+                {!sidebarCollapsed && <span>Районы</span>}
+              </NavLink>
+              <button
                 onClick={logout}
                 className="nav-link"
                 style={{ 
@@ -516,6 +577,8 @@ function AppContent() {
               <Route path="/discounts" element={<Suspense fallback={<LoadingFallback />}><Discounts /></Suspense>} />
               <Route path="/addon-templates" element={<Suspense fallback={<LoadingFallback />}><AddonTemplates /></Suspense>} />
               <Route path="/settings" element={<Suspense fallback={<LoadingFallback />}><Settings /></Suspense>} />
+              <Route path="/couriers" element={<Suspense fallback={<LoadingFallback />}><CourierRegistration /></Suspense>} />
+              <Route path="/delivery-zones" element={<Suspense fallback={<LoadingFallback />}><DeliveryZones /></Suspense>} />
             </Routes>
           </main>
         </div>

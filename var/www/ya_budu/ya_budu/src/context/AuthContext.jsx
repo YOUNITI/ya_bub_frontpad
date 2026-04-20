@@ -66,6 +66,8 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
     localStorage.removeItem('token');
     localStorage.removeItem('user');
+    // Также удаляем данные о заказе
+    localStorage.removeItem('guestOrder');
   };
 
   const isAuthenticated = () => {

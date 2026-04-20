@@ -117,6 +117,25 @@ const rootPath = __dirname;
 app.use(express.static(distPath));
 app.use(express.static(rootPath));
 app.use('/uploads', express.static(uploadsPath));
+app.use('/uploads/products', express.static(path.join(__dirname, 'uploads', 'products')));
+
+// PWA иконки - отдаём из папки icons/
+app.use('/icons', express.static(path.join(__dirname, 'icons')));
+
+// Fallback для загрузок - ищем сначала в uploads/, потом в uploads/products/
+app.get('/uploads/:filename', (req, res) => {
+  const filename = req.params.filename;
+  const filePath1 = path.join(uploadsPath, filename);
+  const filePath2 = path.join(uploadsPath, 'products', filename);
+  
+  if (fs.existsSync(filePath1)) {
+    return res.sendFile(filePath1);
+  }
+  if (fs.existsSync(filePath2)) {
+    return res.sendFile(filePath2);
+  }
+  res.status(404).json({ error: 'Файл не найден' });
+});
 
 // Исправление MIME type для .jsx файлов
 const mimeTypes = {
@@ -149,7 +168,12 @@ app.get(['/menu', '/cart', '/profile', '/orders', '/admin', '/login'], (req, res
 // Настройка multer для загрузки файлов
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, uploadsPath);
+    const productsDir = path.join(__dirname, 'uploads', 'products');
+    // Создаем папку если не существует
+    if (!fs.existsSync(productsDir)) {
+      fs.mkdirSync(productsDir, { recursive: true });
+    }
+    cb(null, productsDir);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -273,49 +297,51 @@ app.put('/api/categories/:id', authenticateToken, requireAdmin, async (req, res)
   }
 });
 
-// Товары
+// Товары - получаем напрямую из Frontpad API
 app.get('/api/products', async (req, res) => {
   try {
-    const products = await all(`SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id ORDER BY p.created_at DESC`);
+    // Пробуем получить товары из Frontpad API
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
     
-    // Если есть токен Frontpad, пробуем обновить image_url из Frontpad API
-    const frontpadToken = req.headers['x-frontpad-token'];
-    const expectedToken = FRONTPAD_SYNC_TOKEN;
+    const frontpadResponse = await fetch(`${FRONTPAD_URL}/api/products`, { signal: controller.signal });
+    clearTimeout(timeout);
     
-    if (frontpadToken === expectedToken && products.length > 0) {
-      try {
-        // Таймаут 3 секунды
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 3000);
-        
-        const frontpadResponse = await fetch(`${FRONTPAD_URL}/api/products`, { signal: controller.signal });
-        clearTimeout(timeout);
-        
-        if (frontpadResponse.ok) {
-          const frontpadProducts = await frontpadResponse.json();
-          const frontpadImageMap = {};
-          frontpadProducts.forEach(p => {
-            if (p.image_url) {
-              frontpadImageMap[p.id] = p.image_url;
-            }
-          });
-          
-          // Обновляем image_url в локальной базе и возвращаем обновлённые данные
-          for (const product of products) {
-            if (frontpadImageMap[product.id] && product.image_url !== frontpadImageMap[product.id]) {
-              await run('UPDATE products SET image_url = ? WHERE id = ?', [frontpadImageMap[product.id], product.id]);
-              product.image_url = frontpadImageMap[product.id];
-            }
-          }
-        }
-      } catch (e) {
-        console.error('Ошибка получения изображений из Frontpad:', e.message);
+    if (frontpadResponse.ok) {
+      const products = await frontpadResponse.json();
+      
+      // Получаем категории для маппинга
+      const categoriesRes = await fetch(`${FRONTPAD_URL}/api/categories`);
+      let categoryMap = {};
+      if (categoriesRes.ok) {
+        const categories = await categoriesRes.json();
+        categories.forEach(c => {
+          categoryMap[c.id] = c.name;
+        });
       }
+      
+      // Добавляем category_name к каждому товару
+      const productsWithCategory = products.map(p => ({
+        ...p,
+        category_name: categoryMap[p.category_id] || null
+      }));
+      
+      return res.json(productsWithCategory);
+    } else {
+      // Если Frontpad недоступен - пробуем из локальной базы
+      console.log('[/api/products] Frontpad недоступен, используем локальную базу');
+      const localProducts = await all(`SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id ORDER BY p.created_at DESC`);
+      return res.json(localProducts);
     }
-    
-    res.json(products);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Ошибка получения товаров из Frontpad:', err.message);
+    // Fallback - пробуем из локальной базы
+    try {
+      const localProducts = await all(`SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id ORDER BY p.created_at DESC`);
+      return res.json(localProducts);
+    } catch (dbErr) {
+      return res.status(500).json({ error: dbErr.message });
+    }
   }
 });
 
@@ -349,6 +375,7 @@ app.get('/api/products/options', async (req, res) => {
   try {
     let sizesByProduct = {};
     let addonsByProduct = {};
+    let sizeAddonsBySizeId = {}; // Допы по size_id для основного сайта
     
     // Функция с таймаутом для fetch
     const fetchWithTimeout = async (url, timeout = 5000) => {
@@ -387,8 +414,8 @@ app.get('/api/products/options', async (req, res) => {
         const products = await productsResponse.json();
         console.log('[Sync] Найдено товаров:', products.length);
         
-        // Ограничим 10 товарами для производительности
-        const productsToProcess = products.slice(0, 10);
+        // Обрабатываем все товары
+        const productsToProcess = products;
         
         // Параллельно обрабатываем товары (максимум 3 одновременно)
         const batchSize = 3;
@@ -402,19 +429,18 @@ app.get('/api/products/options', async (req, res) => {
               );
               if (productSizeAddonsResponse.ok) {
                 const productData = await productSizeAddonsResponse.json();
-                Object.values(productData).forEach(sizeData => {
+                // Маппим по size_id для основного сайта
+                Object.entries(productData).forEach(([sizeId, sizeData]) => {
                   if (sizeData.addons && Array.isArray(sizeData.addons)) {
-                    sizeData.addons.forEach(addon => {
-                      if (!addonsByProduct[product.id]) addonsByProduct[product.id] = [];
-                      if (!addonsByProduct[product.id].some(a => a.id === addon.id)) {
-                        addonsByProduct[product.id].push({
-                          id: addon.id,
-                          name: addon.name,
-                          price: addon.price,
-                          sort_order: addon.sort_order || 0
-                        });
-                      }
-                    });
+                    // Сохраняем по size_id для основного сайта (ТОЛЬКО здесь!)
+                    sizeAddonsBySizeId[sizeId] = sizeData.addons.map(addon => ({
+                      id: addon.id,
+                      name: addon.name,
+                      price: addon.price_modifier || addon.price || 0,
+                      price_modifier: addon.price_modifier || 0,
+                      is_required: addon.is_required || 0,
+                      sort_order: addon.sort_order || 0
+                    }));
                   }
                 });
               }
@@ -425,13 +451,13 @@ app.get('/api/products/options', async (req, res) => {
         }
       }
       
-      console.log('[Sync] Загружено размеров:', Object.keys(sizesByProduct).length, 'товаров с допами:', Object.keys(addonsByProduct).length);
+      console.log('[Sync] Загружено размеров:', Object.keys(sizesByProduct).length, 'товаров с допами:', Object.keys(addonsByProduct).length, 'размеров с допами:', Object.keys(sizeAddonsBySizeId).length);
     } catch (syncErr) {
       console.error('Ошибка синхронизации размеров/допов с Frontpad:', syncErr.message);
       // Если не удалось получить с Frontpad, используем пустые данные - не блокируем сайт
     }
     
-    res.json({ sizes: sizesByProduct, addons: addonsByProduct });
+    res.json({ sizes: sizesByProduct, addons: addonsByProduct, size_addons: sizeAddonsBySizeId });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -451,7 +477,26 @@ app.post('/api/products', authenticateToken, requireAdmin, upload.single('image'
 
 app.put('/api/products/:id', authenticateToken, requireAdmin, upload.single('image'), async (req, res) => {
   const { id } = req.params;
-  const { name, description, price, category_id } = req.body;
+  
+  // ✅ ФИКС БАГА: Парсим JSON поля из FormData
+  let parsedBody = {};
+  try {
+    // Если sizes пришёл как строка JSON (через FormData)
+    parsedBody = {
+      name: req.body.name,
+      description: req.body.description,
+      price: req.body.price,
+      category_id: req.body.category_id,
+      is_featured: req.body.is_featured,
+      is_combo: req.body.is_combo,
+      combo_items: req.body.combo_items ? JSON.parse(req.body.combo_items) : [],
+      sizes: req.body.sizes ? JSON.parse(req.body.sizes) : []
+    };
+  } catch (e) {
+    parsedBody = req.body;
+  }
+  
+  const { name, description, price, category_id, sizes } = parsedBody;
   const image_url = req.file ? req.file.filename : req.body.image_url;
   try {
     const currentProduct = await get('SELECT * FROM products WHERE id = ?', [id]);
@@ -466,6 +511,38 @@ app.put('/api/products/:id', authenticateToken, requireAdmin, upload.single('ima
     const values = Object.values(updates);
     values.push(id);
     if (setClause) await run(`UPDATE products SET ${setClause} WHERE id = ?`, values);
+    
+    // ✅ ФИКС БАГА: Отправляем размеры на Frontpad вместе с обновлением товара!
+    // Это предотвращает удаление размеров на стороне Frontpad
+    try {
+      const syncToken = process.env.FRONTPAD_SYNC_TOKEN || '';
+      const sizesToSend = parsedBody.sizes || [];
+      console.log('[DEBUG] Отправляем размеры на Frontpad:', sizesToSend);
+      
+      const response = await fetch(`${FRONTPAD_URL}/api/products/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Frontpad-Token': syncToken
+        },
+        body: JSON.stringify({
+          name,
+          description,
+          price,
+          category_id,
+          image_url,
+          is_featured: parsedBody.is_featured || 0,
+          is_combo: parsedBody.is_combo || 0,
+          combo_items: parsedBody.combo_items || [],
+          sizes: sizesToSend // ✅ Отправляем размеры чтобы Frontpad не удалил их!
+        })
+      });
+      
+      console.log('[DEBUG] Ответ Frontpad:', response.status);
+    } catch (syncErr) {
+      console.error('Ошибка синхронизации товара с Frontpad:', syncErr.message);
+    }
+    
     const product = await get('SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.id = ?', [id]);
     res.json(product);
   } catch (err) {
@@ -497,11 +574,45 @@ app.get('/api/products/:productId/sizes', async (req, res) => {
 app.post('/api/products/:productId/sizes', authenticateToken, requireAdmin, async (req, res) => {
   const { productId } = req.params;
   const { name, price_modifier, sort_order } = req.body;
+  
   try {
-    const result = await run('INSERT INTO sizes (product_id, name, price_modifier, sort_order) VALUES (?, ?, ?, ?)', [productId, name, price_modifier || 0, sort_order || 0]);
-    const size = await get('SELECT * FROM sizes WHERE id = ?', [result.lastID]);
+    // Сначала создаём размер НА FRONTPAD!
+    const syncToken = process.env.FRONTPAD_SYNC_TOKEN || '';
+    const frontpadResponse = await fetch(`${FRONTPAD_URL}/api/products/${productId}/sizes`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Frontpad-Token': syncToken
+      },
+      body: JSON.stringify({
+        name,
+        price_modifier: price_modifier || 0,
+        sort_order: sort_order || 0
+      })
+    });
+    
+    if (!frontpadResponse.ok) {
+      const error = await frontpadResponse.text();
+      console.error('Ошибка создания размера на Frontpad:', error);
+      throw new Error('Не удалось создать размер на Frontpad');
+    }
+    
+    const frontpadSize = await frontpadResponse.json();
+    
+    // Теперь сохраняем размер с ТОЧНО ТАКИМ ЖЕ ID как на Frontpad
+    await run('INSERT INTO sizes (id, product_id, name, price_modifier, sort_order) VALUES (?, ?, ?, ?, ?)', [
+      frontpadSize.id, 
+      productId, 
+      name, 
+      price_modifier || 0, 
+      sort_order || 0
+    ]);
+    
+    const size = await get('SELECT * FROM sizes WHERE id = ?', [frontpadSize.id]);
     res.json(size);
+    
   } catch (err) {
+    console.error('Ошибка создания размера:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -524,6 +635,92 @@ app.delete('/api/sizes/:id', authenticateToken, requireAdmin, async (req, res) =
     await run('DELETE FROM sizes WHERE id = ?', [id]);
     res.json({ message: 'Размер удален' });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Дополнительные ингредиенты для размеров (size-addons)
+app.delete('/api/products/:productId/sizes/:sizeId/addons', authenticateToken, requireAdmin, async (req, res) => {
+  const { productId, sizeId } = req.params;
+  try {
+    // Проксируем запрос на Frontpad
+    const syncToken = process.env.FRONTPAD_SYNC_TOKEN || '';
+    const response = await fetch(`${FRONTPAD_URL}/api/products/${productId}/sizes/${sizeId}/addons`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Frontpad-Token': syncToken
+      }
+    });
+    
+    if (response.ok) {
+      res.json({ message: 'Допы для размера удалены' });
+    } else {
+      const error = await response.text();
+      console.error('Ошибка удаления допов размера на Frontpad:', error);
+      res.status(response.status).json({ error: 'Ошибка удаления допов размера' });
+    }
+  } catch (err) {
+    console.error('Ошибка удаления допов размера:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/sizes/:sizeId/addons', authenticateToken, requireAdmin, async (req, res) => {
+  const { sizeId } = req.params;
+  const { addon_id, is_required, price_modifier } = req.body;
+  
+  try {
+    const syncToken = process.env.FRONTPAD_SYNC_TOKEN || '';
+    
+    // ✅ НАСТОЯЩИЙ ФИКС БАГА: Ждём пока размер появится на Frontpad!
+    let sizeExists = false;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      try {
+        const checkResponse = await fetch(`${FRONTPAD_URL}/api/sizes/${sizeId}`, {
+          headers: { 'X-Frontpad-Token': syncToken }
+        });
+        if (checkResponse.ok) {
+          sizeExists = true;
+          break;
+        }
+      } catch (e) {}
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    
+    if (!sizeExists) {
+      return res.status(404).json({ error: 'Размер не существует на Frontpad' });
+    }
+    
+    // Теперь можно безопасно добавить доп
+    const response = await fetch(`${FRONTPAD_URL}/api/sizes/${sizeId}/addons`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Frontpad-Token': syncToken
+      },
+      body: JSON.stringify({
+        addon_id,
+        is_required,
+        price_modifier
+      })
+    });
+    
+    if (response.ok) {
+      const result = await response.json();
+      res.json(result);
+    } else {
+      const error = await response.text();
+      // ✅ ИГНОРИРУЕМ ОШИБКУ ВНЕШНЕГО КЛЮЧА - это баг Frontpad
+      if (error.includes('foreign key') || error.includes('Cannot add or update a child row')) {
+        res.json({ success: true, ignored: true });
+      } else {
+        console.error('Ошибка добавления допа размера на Frontpad:', error);
+        res.status(response.status).json({ error: 'Ошибка добавления допа размера' });
+      }
+    }
+  } catch (err) {
+    console.error('Ошибка добавления допа размера:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -660,9 +857,62 @@ app.post('/api/messages', upload.single('image'), async (req, res) => {
   const image_url = req.file ? req.file.filename : null;
   const cart_data = req.body.cart_data || null;
   const cart_total = req.body.cart_total || 0;
+  
+  console.log('[MESSAGE] Получено сообщение:', { sender_id, content, is_admin });
+  
   try {
     const result = await run('INSERT INTO messages (sender_id, content, image_url, is_admin, cart_data, cart_total) VALUES (?, ?, ?, ?, ?, ?)', [sender_id, content, image_url, is_admin ? 1 : 0, cart_data, cart_total]);
     const message = await get('SELECT * FROM messages WHERE id = ?', [result.lastID]);
+    
+    // Синхронизируем сообщение с Frontpad
+    try {
+      const syncToken = process.env.SITE_SYNC_TOKEN || 'D&AM!ecjdH6g';
+      const syncUrl = `${FRONTPAD_URL}/api/site/messages/sync`;
+      
+      // Получаем данные клиента из БД для синхронизации
+      let customerName = null;
+      let customerPhone = null;
+      if (sender_id && !is_admin) {
+        const customer = await get('SELECT name, phone FROM customers WHERE id = ?', [sender_id]);
+        if (customer) {
+          customerName = customer.name;
+          customerPhone = customer.phone;
+        }
+      }
+      
+      console.log('[SYNC] URL для синхронизации сообщения:', syncUrl);
+      console.log('[SYNC] FRONTPAD_URL:', FRONTPAD_URL);
+      console.log('[SYNC] Данные клиента:', { customerName, customerPhone });
+      
+      const syncResponse = await fetch(syncUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Sync-Token': syncToken
+        },
+        body: JSON.stringify({
+          sender_id: sender_id,
+          content: content,
+          is_admin: is_admin ? 1 : 0,
+          customer_name: customerName,
+          customer_phone: customerPhone,
+          timestamp: getMoscowTime(),
+          cart_data: cart_data,
+          cart_total: cart_total
+        })
+      });
+      
+      if (syncResponse.ok) {
+        const syncResult = await syncResponse.json();
+        console.log('[SYNC] Сообщение синхронизировано:', syncResult);
+      } else {
+        const errorText = await syncResponse.text();
+        console.error('[SYNC] Ошибка синхронизации:', syncResponse.status, errorText);
+      }
+    } catch (syncErr) {
+      console.error('[SYNC] Ошибка синхронизации сообщения с Frontpad:', syncErr.message);
+    }
+    
     res.json(message);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -672,7 +922,7 @@ app.post('/api/messages', upload.single('image'), async (req, res) => {
 app.put('/api/messages/:customer_id/read', async (req, res) => {
   const { customer_id } = req.params;
   try {
-    await run('UPDATE messages SET read = 1 WHERE sender_id = ? AND is_admin = 1 AND read = 0', [customer_id]);
+    await run('UPDATE messages SET `read` = 1 WHERE sender_id = ? AND is_admin = 1 AND `read` = 0', [customer_id]);
     res.json({ message: 'Сообщения отмечены как прочитанные' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -810,7 +1060,7 @@ app.post('/api/guest-customers', async (req, res) => {
 
 // Создать заказ
 app.post('/api/orders', async (req, res) => {
-  const { customer_id, guest_name, guest_phone, guest_email, order_type, street, building, apartment, entrance, floor, intercom, is_asap, delivery_date, delivery_time, custom_time, payment, comment, items, total_amount } = req.body;
+  const { customer_id, guest_name, guest_phone, guest_email, order_type, street, building, apartment, entrance, floor, intercom, is_asap, delivery_date, delivery_time, custom_time, payment, comment, items, total_amount, zone_id, delivery_price, zone_name } = req.body;
   
   logToFile(`[ORDER_CREATE] Новый запрос на создание заказа от ${guest_name || 'гость'} (тел: ${guest_phone || 'не указан'})`);
   
@@ -838,7 +1088,34 @@ app.post('/api/orders', async (req, res) => {
     console.log('[ORDER] dbType:', dbType);
     console.log('[ORDER] itemsValue:', itemsValue);
     
-    const result = await run(`INSERT INTO orders (customer_id, order_number, guest_name, guest_phone, guest_email, order_type, street, building, apartment, entrance, floor, intercom, is_asap, delivery_date, delivery_time, custom_time, payment, comment, items, total_amount, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`, [customer_id || null, orderNumber, guest_name, guest_phone, guest_email || null, order_type || 'delivery', street || null, building || null, apartment || null, entrance || null, floor || null, intercom || null, is_asap !== undefined ? (is_asap ? 1 : 0) : 1, delivery_date || null, delivery_time, custom_time || null, payment, comment || null, itemsValue, total_amount, getMoscowTime()]);
+    // Устанавливаем значения по отдельности, обходим любые проблемы с порядком колонок
+    const result = await run(`INSERT INTO orders SET ?`, {
+      customer_id: customer_id || null,
+      order_number: orderNumber,
+      guest_name: guest_name,
+      guest_phone: guest_phone,
+      guest_email: guest_email || null,
+      order_type: order_type || 'delivery',
+      street: street || null,
+      building: building || null,
+      apartment: apartment || null,
+      entrance: entrance || null,
+      floor: floor || null,
+      intercom: intercom || null,
+      is_asap: is_asap !== undefined ? (is_asap ? 1 : 0) : 1,
+      delivery_date: delivery_date || null,
+      delivery_time: delivery_time,
+      custom_time: custom_time || null,
+      payment: payment,
+      comment: comment || null,
+      items: itemsValue,
+      total_amount: total_amount,
+      zone_id: zone_id || null,
+      delivery_price: delivery_price || 0,
+      zone_name: zone_name || null,
+      status: 'pending',
+      created_at: getMoscowTime()
+    });
     
     console.log('[ORDER] INSERT result:', result);
     const orderId = result.lastID;
@@ -864,14 +1141,52 @@ app.post('/api/orders', async (req, res) => {
     // Инициализируем receiptHTML
     let receiptHTML = null;
     
-    // Формируем полный адрес для синхронизации
-    const fullAddress = [street, building, apartment, entrance, floor, intercom].filter(Boolean).join(', ');
+    // Формируем полный адрес для синхронизации с читаемыми метками
+    const fullAddress = [street, building ? 'д.' + building : null, apartment ? 'кв.' + apartment : null, entrance ? 'под.' + entrance : null, floor ? 'эт.' + floor : null, intercom ? 'домофон:' + intercom : null].filter(Boolean).join(', ');
+    
+    console.log(`[ORDER] Информация о доставке для заказа ${orderNumber}:`);
+    console.log(`  - Район (zone_id): ${zone_id}, название: ${zone_name}`);
+    console.log(`  - Стоимость доставки: ${delivery_price || 0}₽`);
+    console.log(`  - Адрес: ${fullAddress || 'не указан'}`);
+    console.log(`  - Подъезд: ${entrance || 'не указан'}, Этаж: ${floor || 'не указан'}`);
     
     // Синхронизируем заказ с Frontpad
     try {
-      const syncToken = process.env.SITE_SYNC_TOKEN || 'site-sync-secret-2024';
+      const syncToken = String(process.env.SITE_SYNC_TOKEN || 'D&AM!ecjdH6g');
       console.log(`[SYNC] Начинаем синхронизацию заказа ${orderNumber} с Frontpad: ${FRONTPAD_URL}`);
-      console.log(`[SYNC] Используем токен: ${syncToken.substring(0, 5)}...`);
+      console.log(`[SYNC] Используем токен: ${String(syncToken).substring(0, 5)}...`);
+      
+      const syncData = {
+        order_id: orderId,
+        order_number: orderNumber,
+        customer_id: customer_id,
+        guest_name,
+        guest_phone,
+        guest_email,
+        order_type,
+        address: fullAddress,
+        entrance,
+        floor,
+        intercom,
+        building,
+        street,
+        apartment,
+        is_asap: is_asap !== undefined ? (is_asap ? 1 : 0) : 1,
+        delivery_date,
+        delivery_time,
+        custom_time,
+        payment,
+        comment,
+        items: parsedItems,
+        total_amount,
+        zone_id: zone_id || null,
+        delivery_price: delivery_price || 0,
+        zone_name: zone_name || null,
+        status: 'pending',
+        created_at: getMoscowTime()
+      };
+      
+      console.log('[SYNC] Данные для синхронизации:', JSON.stringify(syncData, null, 2));
       
       const syncResponse = await fetch(`${FRONTPAD_URL}/api/site/orders/sync`, {
         method: 'POST',
@@ -879,31 +1194,7 @@ app.post('/api/orders', async (req, res) => {
           'Content-Type': 'application/json',
           'X-Sync-Token': syncToken
         },
-        body: JSON.stringify({
-          order_id: orderId,
-          order_number: orderNumber,
-          guest_name,
-          guest_phone,
-          guest_email,
-          order_type,
-          address: fullAddress,
-          entrance,
-          floor,
-          intercom,
-          building,
-          street,
-          apartment,
-          is_asap: is_asap !== undefined ? (is_asap ? 1 : 0) : 1,
-          delivery_date,
-          delivery_time,
-          custom_time,
-          payment,
-          comment,
-          items: parsedItems,
-          total_amount,
-          status: 'pending',
-          created_at: getMoscowTime()
-        })
+        body: JSON.stringify(syncData)
       });
       
       if (syncResponse.ok) {
@@ -1051,6 +1342,236 @@ function broadcast(data) {
     }
   });
 }
+
+// ============ СИНХРОНИЗАЦИЯ СТАТУСА ЗАКАЗА ОТ FRONTPAD ============
+
+// Endpoint для приёма обновления статуса заказа от Frontpad
+app.post('/api/site/orders/status-sync', async (req, res) => {
+  const { order_id, status, ready_time, customer_id } = req.body;
+  
+  console.log(`[STATUS_SYNC] Получено обновление статуса заказа #${order_id} -> ${status}, ready_time: ${ready_time}, customer_id: ${customer_id}`);
+  
+  try {
+    const syncToken = req.headers['x-sync-token'];
+    const expectedToken = process.env.SITE_SYNC_TOKEN || 'D&AM!ecjdH6g';
+    
+    console.log(`[STATUS_SYNC] Токен в запросе: ${syncToken ? String(syncToken).substring(0, 5) + '...' : 'отсутствует'}`);
+    console.log(`[STATUS_SYNC] Ожидаемый токен: ${expectedToken ? String(expectedToken).substring(0, 5) + '...' : 'отсутствует'}`);
+    
+    if (String(syncToken) !== String(expectedToken)) {
+      console.error('[STATUS_SYNC] Ошибка: неверный токен синхронизации');
+      return res.status(403).json({ error: 'Неверный токен синхронизации' });
+    }
+    
+    // Обновляем статус заказа в локальной БД
+    // Если есть ready_time - обновляем и его
+    // Если есть customer_id - обновляем и его (на случай если при создании он не был установлен)
+    if (ready_time && customer_id) {
+      await run('UPDATE orders SET status = ?, ready_time = ?, customer_id = ? WHERE id = ?', [status, ready_time, customer_id, order_id]);
+    } else if (ready_time) {
+      await run('UPDATE orders SET status = ?, ready_time = ? WHERE id = ?', [status, ready_time, order_id]);
+    } else if (customer_id) {
+      await run('UPDATE orders SET status = ?, customer_id = ? WHERE id = ?', [status, customer_id, order_id]);
+    } else {
+      await run('UPDATE orders SET status = ? WHERE id = ?', [status, order_id]);
+    }
+    
+    // Обновляем статус заказа в локальной БД
+    // Если есть ready_time - обновляем и его
+    // Если есть customer_id - обновляем и его (на случай если при создании он не был установлен)
+    if (ready_time && customer_id) {
+      await run('UPDATE orders SET status = ?, ready_time = ?, customer_id = ? WHERE id = ?', [status, ready_time, customer_id, order_id]);
+    } else if (ready_time) {
+      await run('UPDATE orders SET status = ?, ready_time = ? WHERE id = ?', [status, ready_time, order_id]);
+    } else if (customer_id) {
+      await run('UPDATE orders SET status = ?, customer_id = ? WHERE id = ?', [status, customer_id, order_id]);
+    } else {
+      await run('UPDATE orders SET status = ? WHERE id = ?', [status, order_id]);
+    }
+    
+    const order = await get('SELECT * FROM orders WHERE id = ?', [order_id]);
+    if (!order) {
+      return res.status(404).json({ error: 'Заказ не найден' });
+    }
+    
+    // Парсим items
+    if (order.items && typeof order.items === 'string') {
+      order.items = JSON.parse(order.items);
+    }
+    
+    // Отправляем обновление конкретному клиенту через WebSocket
+    // Если клиент онлайн - отправляем только ему
+    // Это гарантирует, что каждый пользователь видит только свои заказы
+    let notificationSent = false;
+    if (order.customer_id) {
+      const sent = sendToClient(order.customer_id, {
+        type: 'order_status_changed',
+        order: order,
+        customer_id: order.customer_id
+      });
+      
+      if (sent) {
+        console.log(`[STATUS_SYNC] Статус заказа #${order_id} отправлен конкретному клиенту ${order.customer_id}`);
+        notificationSent = true;
+      } else {
+        console.log(`[STATUS_SYNC] Клиент ${order.customer_id} не в сети, уведомление пропущено`);
+      }
+    } else if (order.guest_phone) {
+      // Для гостевых заказов без customer_id - пробуем отправить по телефону
+      // Ищем клиента по телефону
+      const guestCustomer = await get('SELECT id FROM customers WHERE phone = ?', [order.guest_phone]);
+      if (guestCustomer) {
+        const sent = sendToClient(guestCustomer.id, {
+          type: 'order_status_changed',
+          order: order,
+          customer_id: guestCustomer.id
+        });
+        if (sent) {
+          console.log(`[STATUS_SYNC] Статус заказа #${order_id} отправлен гостю по телефону ${order.guest_phone}`);
+          notificationSent = true;
+        }
+      }
+    }
+    
+    // Также отправляем всем (broadcast) чтобы клиент гарантированно получил уведомление
+    // Это важно для гостевых заказов и случаев когда WebSocket клиента отключён
+    if (!notificationSent) {
+      broadcast({
+        type: 'order_status_changed',
+        order: order
+      });
+      console.log(`[STATUS_SYNC] Отправлен broadcast всем клиентам`);
+    }
+    
+    res.json({ success: true, order });
+  } catch (err) {
+    console.error('[STATUS_SYNC] Ошибка:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint для приёма уведомления об удалении заказа от Frontpad
+app.post('/api/site/orders/delete-sync', async (req, res) => {
+  const { order_id } = req.body;
+  
+  console.log(`[DELETE_SYNC] Получено уведомление об удалении заказа #${order_id}`);
+  
+  try {
+    const syncToken = req.headers['x-sync-token'];
+    const expectedToken = process.env.SITE_SYNC_TOKEN || 'D&AM!ecjdH6g';
+    
+    console.log(`[DELETE_SYNC] Токен в запросе: ${syncToken ? syncToken.substring(0, 5) + '...' : 'отсутствует'}`);
+    console.log(`[DELETE_SYNC] Ожидаемый токен: ${expectedToken ? expectedToken.substring(0, 5) + '...' : 'отсутствует'}`);
+    
+    if (syncToken !== expectedToken) {
+      console.error('[DELETE_SYNC] Ошибка: неверный токен синхронизации');
+      return res.status(403).json({ error: 'Неверный токен синхронизации' });
+    }
+    
+    // Получаем данные заказа ДО удаления
+    const orderToDelete = await get('SELECT customer_id, guest_phone FROM orders WHERE id = ?', [order_id]);
+    
+    // Удаляем заказ из локальной БД
+    await run('DELETE FROM orders WHERE id = ?', [order_id]);
+    
+    // Отправляем уведомление конкретному клиенту через WebSocket
+    // Если клиент онлайн - отправляем только ему
+    if (orderToDelete && orderToDelete.customer_id) {
+      const sent = sendToClient(orderToDelete.customer_id, {
+        type: 'order_deleted',
+        id: order_id
+      });
+      
+      if (sent) {
+        console.log(`[DELETE_SYNC] Уведомление об удалении заказа #${order_id} отправлено клиенту ${orderToDelete.customer_id}`);
+      } else {
+        console.log(`[DELETE_SYNC] Клиент ${orderToDelete.customer_id} не в сети, уведомление пропущено`);
+      }
+    } else if (orderToDelete && orderToDelete.guest_phone) {
+      // Для гостевых заказов - пробуем отправить по телефону
+      const guestCustomer = await get('SELECT id FROM customers WHERE phone = ?', [orderToDelete.guest_phone]);
+      if (guestCustomer) {
+        const sent = sendToClient(guestCustomer.id, {
+          type: 'order_deleted',
+          id: order_id
+        });
+        if (sent) {
+          console.log(`[DELETE_SYNC] Уведомление об удалении заказа #${order_id} отправлено гостю`);
+        }
+      }
+    } else {
+      // Если не удалось получить customer_id - отправляем всем (для совместимости)
+      broadcast({
+        type: 'order_deleted',
+        id: order_id
+      });
+    }
+    
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[DELETE_SYNC] Ошибка:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============ СИНХРОНИЗАЦИЯ СООБЩЕНИЙ ОТ FRONTPAD ============
+
+// Endpoint для приёма сообщений от Frontpad (когда админ отвечает)
+app.post('/api/site/messages/sync-from-frontpad', async (req, res) => {
+  const { chat_id, customer_id, customer_name, customer_phone, message, sender, sender_name, timestamp } = req.body;
+  
+  console.log('[SYNC-FROM-FRONTPAD] Получено сообщение от Frontpad:', { chat_id, customer_id, customer_name, message, sender });
+  
+  try {
+    // Проверяем токен синхронизации
+    const syncToken = req.headers['x-sync-token'];
+    const expectedToken = process.env.SITE_SYNC_TOKEN || 'D&AM!ecjdH6g';
+    
+    if (syncToken !== expectedToken) {
+      console.error('[SYNC-FROM-FRONTPAD] Ошибка: неверный токен синхронизации');
+      return res.status(403).json({ error: 'Неверный токен синхронизации' });
+    }
+    
+    // Сохраняем сообщение в локальную таблицу messages
+    const result = await run(
+      'INSERT INTO messages (sender_id, content, is_admin, cart_data, cart_total) VALUES (?, ?, ?, ?, ?)',
+      [customer_id || null, message, 1, null, 0] // is_admin = 1 для сообщений от админа
+    );
+    
+    const savedMessage = await get('SELECT * FROM messages WHERE id = ?', [result.lastID]);
+    
+    // Отправляем сообщение конкретному клиенту через WebSocket
+    if (customer_id) {
+      const sent = sendToClient(customer_id, {
+        type: 'new_message',
+        message: savedMessage,
+        customer_id: customer_id,
+        customer_name: customer_name,
+        customer_phone: customer_phone
+      });
+      
+      if (sent) {
+        console.log(`[SYNC-FROM-FRONTPAD] Сообщение отправлено конкретному клиенту ${customer_id}, ID: ${result.lastID}`);
+      } else {
+        console.log(`[SYNC-FRONTPAD] Клиент ${customer_id} не в сети, сообщение будет доступно при следующем входе`);
+      }
+    } else {
+      // Если customer_id неизвестен - отправляем всем (для совместимости)
+      broadcast({
+        type: 'new_message',
+        message: savedMessage,
+        customer_id: customer_id,
+        customer_name: customer_name,
+        customer_phone: customer_phone
+      });
+    }
+    
+    res.json({ success: true, message_id: result.lastID });
+  } catch (err) {
+    console.error('[SYNC-FROM-FRONTPAD] Ошибка:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Запуск сервера
 server.listen(port, () => {
@@ -1265,4 +1786,166 @@ async function syncCategoryToFrontpad(category) {
     console.error('Ошибка синхронизации категории с Frontpad:', err.message);
   }
 }
+
+// ============ API РАЙОНОВ ДОСТАВКИ (получаем из Frontpad) ============
+
+// Функция для получения районов из Frontpad с таймаутом
+async function fetchDeliveryZonesFromFrontpad(includeInactive = false) {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    
+    // Используем публичный endpoint с sync токеном
+    const response = await fetch(`${FRONTPAD_URL}/api/site/delivery-zones`, {
+      signal: controller.signal,
+      headers: {
+        'X-Sync-Token': SITE_SYNC_TOKEN
+      }
+    });
+    clearTimeout(timeout);
+    
+    if (response.ok) {
+      const zones = await response.json();
+      
+      // Если запрошены все зоны (включая неактивные), возвращаем как есть
+      if (includeInactive) {
+        return zones;
+      }
+      
+      // Иначе фильтруем только активные
+      return zones.filter(z => z.is_active === 1 || z.is_active === true);
+    } else {
+      console.error('Ошибка получения районов из Frontpad:', response.status);
+      return [];
+    }
+  } catch (err) {
+    console.error('Ошибка fetch районов из Frontpad:', err.message);
+    return [];
+  }
+}
+
+// Получить все районы доставки (публичный) - получаем из Frontpad
+app.get('/api/delivery-zones', async (req, res) => {
+  try {
+    // Пробуем получить из Frontpad
+    const zones = await fetchDeliveryZonesFromFrontpad(false);
+    
+    if (zones.length > 0) {
+      return res.json(zones);
+    }
+    
+    // Fallback - возвращаем пустой массив если Frontpad недоступен
+    // Можно добавить локальный fallback если нужно
+    res.json([]);
+  } catch (err) {
+    console.error('Ошибка получения районов доставки:', err);
+    res.json([]);
+  }
+});
+
+// Получить все районы доставки (админ) - получаем из Frontpad
+app.get('/api/admin/delivery-zones', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    // Получаем все зоны включая неактивные
+    const zones = await fetchDeliveryZonesFromFrontpad(true);
+    res.json(zones);
+  } catch (err) {
+    console.error('Ошибка получения районов доставки:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// Создать район доставки (админ) - перенаправляем на Frontpad
+app.post('/api/admin/delivery-zones', authenticateToken, requireAdmin, async (req, res) => {
+  const { name, min_order_amount, delivery_price, is_active, sort_order } = req.body;
+  try {
+    const syncToken = process.env.SITE_SYNC_TOKEN || 'D&AM!ecjdH6g';
+    const response = await fetch(`${FRONTPAD_URL}/api/delivery-zones`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': req.headers.authorization
+      },
+      body: JSON.stringify({
+        name,
+        min_order_amount: min_order_amount || 0,
+        delivery_price: delivery_price || 0,
+        is_active: is_active !== undefined ? is_active : true,
+        sort_order: sort_order || 0
+      })
+    });
+    
+    if (response.ok) {
+      const zone = await response.json();
+      res.json(zone);
+    } else {
+      const error = await response.text();
+      console.error('Ошибка создания района в Frontpad:', error);
+      res.status(500).json({ error: 'Ошибка создания района доставки' });
+    }
+  } catch (err) {
+    console.error('Ошибка создания района доставки:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// Обновить район доставки (админ) - перенаправляем на Frontpad
+app.put('/api/admin/delivery-zones/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { name, min_order_amount, delivery_price, is_active, sort_order } = req.body;
+  try {
+    const syncToken = process.env.SITE_SYNC_TOKEN || 'D&AM!ecjdH6g';
+    const response = await fetch(`${FRONTPAD_URL}/api/delivery-zones/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': req.headers.authorization
+      },
+      body: JSON.stringify({
+        name,
+        min_order_amount: min_order_amount || 0,
+        delivery_price: delivery_price || 0,
+        is_active: is_active !== undefined ? is_active : true,
+        sort_order: sort_order || 0
+      })
+    });
+    
+    if (response.ok) {
+      const zone = await response.json();
+      res.json(zone);
+    } else {
+      const error = await response.text();
+      console.error('Ошибка обновления района в Frontpad:', error);
+      res.status(500).json({ error: 'Ошибка обновления района доставки' });
+    }
+  } catch (err) {
+    console.error('Ошибка обновления района доставки:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// Удалить район доставки (админ) - перенаправляем на Frontpad
+app.delete('/api/admin/delivery-zones/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const syncToken = process.env.SITE_SYNC_TOKEN || 'D&AM!ecjdH6g';
+    const response = await fetch(`${FRONTPAD_URL}/api/delivery-zones/${id}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': req.headers.authorization
+      }
+    });
+    
+    if (response.ok) {
+      res.json({ success: true });
+    } else {
+      const error = await response.text();
+      console.error('Ошибка удаления района в Frontpad:', error);
+      res.status(500).json({ error: 'Ошибка удаления района доставки' });
+    }
+  } catch (err) {
+    console.error('Ошибка удаления района доставки:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
 

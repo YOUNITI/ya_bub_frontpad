@@ -15,6 +15,7 @@ import TermsOfService from './components/TermsOfService';
 import PrivacyPolicy from './components/PrivacyPolicy';
 import ProtectedRoute from './components/ProtectedRoute';
 import WorkingHoursModal from './components/WorkingHoursModal';
+import OrderStatusNotification from './components/OrderStatusNotification';
 
 function App() {
   return (
@@ -38,6 +39,7 @@ function App() {
               <Footer />
               <InstallPWA />
               <WorkingHoursModal />
+              <OrderStatusNotification />
             </div>
           </ChatProvider>
         </AuthProvider>

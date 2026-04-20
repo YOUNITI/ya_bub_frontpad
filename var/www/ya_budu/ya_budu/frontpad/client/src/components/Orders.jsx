@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Plus, Eye, Trash2, X, Printer, RotateCcw, Bell, Calendar, Edit2, History, Star, Percent } from 'lucide-react';
+import { Plus, Eye, Trash2, X, Printer, RotateCcw, Bell, Calendar, Edit2, History, Star, Percent, Check } from 'lucide-react';
 import moment from 'moment-timezone';
 import { useData } from '../context/DataContext';
 import { playNotificationSound } from './SoundNotification';
@@ -52,6 +52,11 @@ const Orders = () => {
   const [sizeModal, setSizeModal] = useState(null);
   const [discountModal, setDiscountModal] = useState(null);
   const [discountForm, setDiscountForm] = useState({ amount: 0, type: 'rub', reason: '' });
+  const [showCompletedOrders, setShowCompletedOrders] = useState(false); // Сворачивание выполненных заказов
+  const [acceptModal, setAcceptModal] = useState(null); // Модальное окно принятия заказа с time picker
+  const [readyTime, setReadyTime] = useState(''); // Время готовности заказа
+  const [couriers, setCouriers] = useState([]); // Список курьеров для назначения
+  const [selectedCourierId, setSelectedCourierId] = useState(''); // Выбранный курьер в модалке
 
   // Функция для обновления даты в ref и state
   const setDateFilter = (date) => {
@@ -68,10 +73,9 @@ const Orders = () => {
     
     // Товары уже загружены через DataContext
     
-    // Загружаем preorderDates и потом заказы
-    fetchPreorderDates().then((dates) => {
-      fetchOrdersWithDate(today, dates);
-    });
+    // Загружаем заказы и даты предзаказов параллельно (без ожидания)
+    fetchOrdersWithDate(today);
+    fetchPreorderDates();
     
     // Подключение WebSocket
     wsRef.current = new WebSocket(WS_URL);
@@ -93,9 +97,13 @@ const Orders = () => {
           setDateFilter(currentDate);
           fetchOrdersWithDate(currentDate);
           break;
+        case 'order_accepted':
+        case 'order_rejected':
         case 'order_status_changed':
         case 'order_updated':
           // Просто обновляем список заказов на текущей дате
+          // Не вызываем fetchOrdersWithDate с фильтром - используем текущий фильтр
+          // Это предотвращает race condition с локальным обновлением
           fetchOrdersWithDate(dateFilterRef.current);
           fetchPreorderDates();
           break;
@@ -124,11 +132,11 @@ const Orders = () => {
       }, 3000);
     };
     
-    // Polling fallback каждые 30 секунд
+    // Polling fallback каждые 10 секунд (для более быстрого обновления)
     const pollingInterval = setInterval(() => {
       fetchOrdersWithDate(dateFilterRef.current);
       fetchPreorderDates();
-    }, 30000);
+    }, 10000);
     
     return () => {
       if (wsRef.current) {
@@ -140,15 +148,13 @@ const Orders = () => {
 
   // При изменении фильтра даты загружаем заказы
   useEffect(() => {
-    const timer = setTimeout(() => {
-      console.log('[useEffect dateFilter] Fetching orders for date:', dateFilter);
-      fetchOrdersWithDate(dateFilter);
-    }, 100);
-    return () => clearTimeout(timer);
+    console.log('[useEffect dateFilter] Fetching orders for date:', dateFilter);
+    fetchOrdersWithDate(dateFilter);
   }, [dateFilter, filter]);
 
   // Функция fetchOrders с возможностью передать конкретную дату
-  const fetchOrdersWithDate = async (dateParamOverride, preorderDatesParam = null) => {
+  // forcedFilter позволяет принудительно использовать определённый фильтр
+  const fetchOrdersWithDate = async (dateParamOverride, preorderDatesParam = null, forcedFilter = null) => {
     try {
       // Получаем текущую дату по московскому времени с использованием moment-timezone
       const moscowNow = moment().tz('Europe/Moscow');
@@ -188,11 +194,17 @@ const Orders = () => {
         // Для всех остальных дат - обычные заказы
         const params = { date: dateParam, _t: cacheBuster };
         console.log('[fetchOrders] Отправка запроса с params:', params);
-        if (filter !== 'all') {
-          params.status = filter;
+        
+        // Используем forcedFilter если передан, иначе используем filter из state
+        const effectiveFilter = forcedFilter !== null ? forcedFilter : filter;
+        console.log('[fetchOrders] effectiveFilter:', effectiveFilter, '(forced:', forcedFilter, ', state:', filter, ')');
+        
+        if (effectiveFilter !== 'all') {
+          params.status = effectiveFilter;
         }
         const response = await axios.get(`${FRONTPAD_API}/api/orders`, { params });
         console.log('[fetchOrders] Ответ получен, количество заказов:', response.data?.length || 0);
+        console.log('[fetchOrders] Orders is_asap values:', response.data?.map(o => ({ id: o.id, is_asap: o.is_asap, delivery_date: o.delivery_date })));
         setOrders(response.data);
       }
     } catch (error) {
@@ -203,8 +215,14 @@ const Orders = () => {
   };
 
   // Обёртка для fetchOrders которая использует текущий dateFilter
-  const fetchOrders = () => {
-    fetchOrdersWithDate(dateFilterRef.current);
+  // Может принимать явный параметр filter для принудительного сброса фильтра
+  const fetchOrders = (forcedFilter = null) => {
+    // Если передан forcedFilter - используем его, иначе используем текущий filter из state
+    if (forcedFilter) {
+      fetchOrdersWithDate(dateFilterRef.current, null, forcedFilter);
+    } else {
+      fetchOrdersWithDate(dateFilterRef.current);
+    }
   };
 
   // fetchProducts удалён - товары загружаются через DataContext
@@ -224,6 +242,7 @@ const Orders = () => {
     try {
       const response = await axios.get(`${FRONTPAD_API}/api/preorder-dates`);
       const dates = response.data || [];
+      console.log('[fetchPreorderDates] Received dates:', dates);
       setPreorderDates(dates);
       return dates;
     } catch (error) {
@@ -269,6 +288,55 @@ const Orders = () => {
       setCustomerRecommendations({ recommendations: [] });
     } finally {
       setLoadingRecommendations(false);
+    }
+  };
+
+  // Загрузка списка курьеров
+  const fetchCouriers = async () => {
+    try {
+      const response = await axios.get(`${FRONTPAD_API}/api/couriers`);
+      setCouriers(response.data || []);
+    } catch (error) {
+      console.error('Error fetching couriers:', error);
+      setCouriers([]);
+    }
+  };
+
+  // Назначить курьера на заказ
+  const assignCourier = async (orderId, courierId) => {
+    if (!courierId) {
+      alert('Выберите курьера');
+      return;
+    }
+    
+    // Получаем имя курьера из списка
+    const courier = couriers.find(c => c.id == courierId);
+    const courierName = courier?.name || 'Курьер';
+    
+    try {
+      const response = await axios.put(`${FRONTPAD_API}/api/orders/${orderId}/assign-courier`, { 
+        courier_id: courierId,
+        courier_name: courierName
+      });
+      console.log('[ASSIGN_COURIER] Курьер назначен:', response.data);
+      
+      // Обновляем заказ в списке
+      fetchOrders();
+      
+      // Обновляем в деталях если открыто
+      if (showDetails && showDetails.id === orderId) {
+        setShowDetails({ ...showDetails, courier_id: courierId, courier_name: couriers.find(c => c.id == courierId)?.name });
+      }
+      
+      // Обновляем в редактировании если открыто
+      if (editOrder && editOrder.id === orderId) {
+        setEditOrder({ ...editOrder, courier_id: courierId, courier_name: courierName });
+      }
+      
+      alert('Курьер назначен');
+    } catch (error) {
+      console.error('Error assigning courier:', error);
+      alert('Ошибка при назначении курьера');
     }
   };
 
@@ -531,9 +599,20 @@ const Orders = () => {
 
   const updateStatus = async (id, status) => {
     try {
+      // Сначала обновляем локально - заказ не исчезает
+      setOrders(prevOrders => prevOrders.map(order => 
+        order.id === id ? { ...order, status } : order
+      ));
+      
+      // Потом отправляем запрос на сервер
       await axios.put(`${FRONTPAD_API}/api/orders/${id}/status`, { status });
-      fetchOrders();
-      fetchPreorderDates();
+      
+      // Сбрасываем фильтр на "Все заказы" чтобы увидеть изменённый заказ
+      setFilter('all');
+      
+      // Обновляем счётчик уведомлений без перезагрузки страницы
+      window.dispatchEvent(new Event('orders-updated'));
+      
       if (showDetails && showDetails.id === id) {
         const response = await axios.get(`${FRONTPAD_API}/api/orders/${id}`);
         setShowDetails(response.data);
@@ -543,6 +622,8 @@ const Orders = () => {
       }
     } catch (error) {
       console.error('Error updating order:', error);
+      // При ошибке - перезагружаем чтобы вернуть корректное состояние
+      fetchOrders();
     }
   };
 
@@ -556,6 +637,103 @@ const Orders = () => {
       }
     } catch (error) {
       console.error('Error deleting order:', error);
+    }
+  };
+
+  // Открыть модальное окно принятия заказа с выбором времени
+  const openAcceptModal = (order) => {
+    setAcceptModal(order);
+    // По умолчанию устанавливаем текущее время + 30 минут
+    const now = new Date();
+    now.setMinutes(now.getMinutes() + 30);
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    setReadyTime(`${hours}:${minutes}`);
+  };
+
+  // Принять заказ с указанным временем готовности
+  const handleAcceptOrder = async () => {
+    if (!acceptModal) return;
+    
+    try {
+      // Вызов API для принятия заказа с временем готовности
+      const response = await axios.put(`${FRONTPAD_API}/api/orders/${acceptModal.id}/accept`, { ready_time: readyTime });
+      
+      console.log('[ACCEPT_ORDER] Заказ принят:', acceptModal.id, 'Время готовности:', readyTime, 'Ответ:', response.data);
+      
+      // Закрываем модальное окно
+      setAcceptModal(null);
+      setReadyTime('');
+      
+      // Сбрасываем фильтр на "Все заказы" чтобы увидеть изменённый заказ
+      setFilter('all');
+      
+      // Дожидаемся завершения запроса - НЕ вызываем fetchOrders отдельно
+      // Сервер уже отправил order_accepted broadcast, и WebSocket обновит список
+      // Просто обновляем локально изменённый заказ
+      setOrders(prevOrders => {
+        return prevOrders.map(order => {
+          if (order.id === acceptModal.id) {
+            return { 
+              ...order, 
+              status: 'в производстве', 
+              ready_time: readyTime 
+            };
+          }
+          return order;
+        });
+      });
+      
+      console.log('[ACCEPT_ORDER] Заказ обновлён локально, ID:', acceptModal.id);
+    } catch (error) {
+      console.error('Error accepting order:', error);
+      // Показываем ошибку если есть ответ от сервера
+      if (error.response?.data?.error) {
+        alert('Ошибка: ' + error.response.data.error);
+      } else {
+        alert('Ошибка при принятии заказа');
+      }
+    }
+  };
+
+  // Отказать в заказе
+  const handleRejectOrder = async (orderId) => {
+    // Запрашиваем причину отказа
+    const reason = window.prompt('Укажите причину отказа (необязательно):');
+    
+    if (!window.confirm('Отказать в заказе?')) return;
+    
+    try {
+      // Вызов API для отказа от заказа
+      await axios.put(`${FRONTPAD_API}/api/orders/${orderId}/reject`, { reason: reason || null });
+      
+      console.log('[REJECT_ORDER] Заказ отклонён:', orderId, 'Причина:', reason);
+      
+      // Сбрасываем фильтр на "Все заказы" чтобы увидеть изменённый заказ
+      setFilter('all');
+      
+      // Обновляем локально - НЕ вызываем fetchOrders отдельно
+      // Сервер отправит broadcast, и WebSocket обновит список
+      setOrders(prevOrders => {
+        return prevOrders.map(order => {
+          if (order.id === orderId) {
+            return { 
+              ...order, 
+              status: 'отклонён',
+              comment: reason ? `[ОТКЛОНЁН: ${reason}] ${order.comment || ''}` : order.comment
+            };
+          }
+          return order;
+        });
+      });
+    } catch (error) {
+      console.error('Error rejecting order:', error);
+      // Показываем ошибку если есть ответ от сервера
+      if (error.response?.data?.error) {
+        alert('Ошибка: ' + error.response.data.error);
+      } else {
+        alert('Ошибка при отказе от заказа');
+      }
     }
   };
 
@@ -655,21 +833,55 @@ const Orders = () => {
 
   const getStatusBadge = (status) => {
     const badges = {
-      pending: <span className="badge badge-new">Новый</span>,
-      processing: <span className="badge badge-processing">В обработке</span>,
-      ready: <span className="badge badge-ready">Готов</span>,
-      delivered: <span className="badge badge-delivered">Доставлен</span>,
-      cancelled: <span className="badge badge-cancelled">Отменён</span>
+      'новый': <span className="badge badge-new">Новый</span>,
+      'в производстве': <span className="badge badge-processing">В производстве</span>,
+      'произведен': <span className="badge badge-ready">Произведен</span>,
+      'в пути': <span className="badge badge-delivering">В пути</span>,
+      'выполнен': <span className="badge badge-completed">Выполнен</span>,
+      'отменён': <span className="badge badge-cancelled">Отменён</span>
     };
     return badges[status] || status;
   };
 
   const totalAmount = formData.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
-  // Статистика
-  const todayOrders = orders.filter(o => o.status !== 'cancelled');
+  // Функция для получения времени готовности для отображения на карточке заказа
+  // Показываем ready_time (время готовности) если есть, иначе ничего
+  const getReadyTime = (order) => {
+    // Если есть ready_time и статус не "новый" - показываем время готовности
+    if (order.ready_time && order.status !== 'новый') {
+      return order.ready_time;
+    }
+    return null;
+  };
+
+  // Статистика - не учитываем отклонённые заказы
+  const todayOrders = orders.filter(o => o.status !== 'отменён' && o.status !== 'rejected');
   const totalRevenue = todayOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
   const avgCheck = todayOrders.length > 0 ? totalRevenue / todayOrders.length : 0;
+
+  // Показываем ВСЕ заказы в одном списке (не разделяем на active/completed/rejected)
+  // Это нужно чтобы заказ не исчезал при смене статуса
+  const allOrdersForDisplay = orders;
+
+  // Фильтруем заказы по статусу для отображения
+  // Учитываем ВСЕ возможные варианты статусов из базы данных
+  const activeOrders = orders.filter(o => 
+    o.status !== 'выполнен' && 
+    o.status !== 'completed' &&
+    o.status !== 'delivered' &&
+    o.status !== 'ready' &&
+    o.status !== 'отклонён' &&
+    o.status !== 'rejected' &&
+    o.status !== 'cancelled'
+  );
+  
+  const completedOrders = orders.filter(o => 
+    o.status === 'выполнен' || 
+    o.status === 'completed' ||
+    o.status === 'delivered' ||
+    o.status === 'ready'
+  );
 
   // Открыть редактирование заказа
   const handleEditOrder = (order) => {
@@ -677,6 +889,9 @@ const Orders = () => {
       ...order,
       items: order.items || []
     });
+    // Загружаем список курьеров для назначения
+    fetchCouriers();
+    setSelectedCourierId(order.courier_id || '');
   };
 
   // Добавить товар в редактируемый заказ
@@ -785,7 +1000,8 @@ const Orders = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <h2 style={{ fontSize: '28px' }}>Заказы</h2>
-          {preorderDates.length > 0 && (
+          {console.log('[RENDER] preorderDates.length:', preorderDates.length, 'orders with is_asap=0:', orders.filter(o => o.is_asap === 0).length)}
+          {(preorderDates.length > 0 || orders.some(order => order.is_asap === 0)) && (
             <div 
               style={{ 
                 display: 'flex', 
@@ -801,15 +1017,17 @@ const Orders = () => {
               }}
               onClick={() => {
                 const today = getMoscowDate();
-                const todayPreorder = preorderDates.find(d => d.delivery_date === today);
-                const targetDate = todayPreorder ? today : preorderDates[0].delivery_date;
+                const todayPreorder = orders.find(o => o.is_asap === 0 && o.delivery_date === today);
+                const preorderDatesList = orders.filter(o => o.is_asap === 0).map(o => o.delivery_date);
+                const uniqueDates = [...new Set(preorderDatesList)].filter(Boolean);
+                const targetDate = todayPreorder ? today : (uniqueDates.length > 0 ? uniqueDates[0] : today);
                 fetchPreordersForDate(targetDate);
                 setCurrentPreorderDate(targetDate);
                 setDateFilter(targetDate);
               }}
             >
               <Bell size={16} />
-              {preorderDates.length} дат с предзаказами
+              Предзаказы
             </div>
           )}
         </div>
@@ -846,29 +1064,32 @@ const Orders = () => {
               setShowPreorders(false);
             }}
           />
-          {preorderDates.length > 0 && (
+          {(preorderDates.length > 0 || orders.some(order => order.is_asap === 0)) && (
             <button 
               className="btn btn-danger"
               onClick={() => {
                 const today = getMoscowDate();
-                const todayPreorder = preorderDates.find(d => d.delivery_date === today);
-                const targetDate = todayPreorder ? today : preorderDates[0].delivery_date;
-                fetchPreordersForDate(targetDate);
-                setDateFilter(targetDate);
+                const todayPreorder = preorderDates.find(d => d.delivery_date === today) || orders.find(o => o.is_asap === 0 && o.delivery_date === today);
+                const targetDate = todayPreorder ? today : (preorderDates.length > 0 ? preorderDates[0].delivery_date : orders.filter(o => o.is_asap === 0)[0]?.delivery_date);
+                if (targetDate) {
+                  fetchPreordersForDate(targetDate);
+                  setDateFilter(targetDate);
+                }
               }}
               style={{ background: '#dc2626', color: 'white' }}
             >
               <Calendar size={16} />
-              Предзаказы ({preorderDates.reduce((sum, d) => sum + d.order_count, 0)})
+              Предзаказы {preorderDates.length > 0 ? `(${preorderDates.reduce((sum, d) => sum + d.order_count, 0)})` : ''}
             </button>
           )}
           <select className="form-select" style={{ width: 'auto' }} value={filter} onChange={(e) => setFilter(e.target.value)}>
             <option value="all">Все заказы</option>
-            <option value="pending">Новые</option>
-            <option value="processing">В обработке</option>
-            <option value="ready">Готовы</option>
-            <option value="delivered">Доставлены</option>
-            <option value="cancelled">Отменены</option>
+            <option value="новый">Новые</option>
+            <option value="в производстве">В производстве</option>
+            <option value="произведен">Произведены</option>
+            <option value="в пути">В пути</option>
+            <option value="выполнен">Выполнены</option>
+            <option value="отменён">Отменены</option>
           </select>
         </div>
       </div>
@@ -975,13 +1196,13 @@ const Orders = () => {
                   <strong>#{order.id}</strong> - {order.guest_name || 'Гость'} ({order.guest_phone})
                   <div style={{ fontSize: '12px', color: '#6b7280' }}>
                     {order.delivery_time && `Доставка: ${order.delivery_time}`}
-                    {order.address && ` - ${order.address}`}
+                    {(order.address || order.street || order.building) && ` - ${order.address || [order.street, order.building ? 'д.' + order.building : null, order.apartment ? 'кв.' + order.apartment : null].filter(Boolean).join(', ')}`}
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   <span style={{ fontWeight: '600' }}>{order.total_amount} ₽</span>
-                  <span className={`badge badge-${order.status === 'pending' ? 'new' : order.status === 'processing' ? 'processing' : order.status === 'ready' ? 'ready' : 'delivered'}`}>
-                    {order.status === 'pending' ? 'Новый' : order.status === 'processing' ? 'В обработке' : order.status === 'ready' ? 'Готов' : order.status}
+                  <span className={`badge badge-${order.status === 'новый' || order.status === 'new' ? 'new' : order.status === 'в производстве' || order.status === 'processing' ? 'processing' : order.status === 'произведен' || order.status === 'ready' ? 'ready' : order.status === 'в пути' || order.status === 'delivering' ? 'delivering' : order.status === 'выполнен' || order.status === 'completed' ? 'completed' : 'cancelled'}`}>
+                    {order.status === 'новый' || order.status === 'new' ? 'Новый' : order.status === 'в производстве' || order.status === 'processing' ? 'В производстве' : order.status === 'произведен' || order.status === 'ready' ? 'Произведен' : order.status === 'в пути' || order.status === 'delivering' ? 'В пути' : order.status === 'выполнен' || order.status === 'completed' ? 'Выполнен' : order.status === 'отменён' || order.status === 'rejected' || order.status === 'cancelled' ? 'Отменён' : order.status}
                   </span>
                 </div>
               </div>
@@ -992,12 +1213,13 @@ const Orders = () => {
 
       <div className="card" style={{ padding: '12px' }}>
         <div style={{ display: 'grid', gap: '10px', maxWidth: '100%' }}>
-          {orders.map(order => (
+          {/* Активные заказы (не выполненные и не отменённые) */}
+          {activeOrders.map(order => (
             <div 
               key={order.id} 
               style={{ 
-                background: '#f9fafb', 
-                border: '1px solid #e5e7eb', 
+                background: order.status === 'новый' ? '#fee2e2' : order.status === 'в производстве' ? '#dbeafe' : order.status === 'произведен' ? '#dcfce7' : order.status === 'в пути' ? '#fef9c3' : order.status === 'выполнен' ? '#ffffff' : '#f3f4f6',
+                border: `2px solid ${order.status === 'новый' ? '#ef4444' : order.status === 'в производстве' ? '#3b82f6' : order.status === 'произведен' ? '#22c55e' : order.status === 'в пути' ? '#eab308' : order.status === 'выполнен' ? '#9ca3af' : '#d1d5db'}`, 
                 borderRadius: '10px', 
                 padding: '12px',
                 display: 'grid',
@@ -1009,7 +1231,7 @@ const Orders = () => {
               <div style={{ textAlign: 'center', minWidth: '50px' }}>
                 <div style={{ fontSize: '16px', fontWeight: '700', color: '#374151' }}>#{order.id}</div>
                 <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>
-                  {new Date(order.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+                  {getReadyTime(order)}
                 </div>
               </div>
 
@@ -1020,23 +1242,44 @@ const Orders = () => {
                 <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '2px' }}>
                   {order.guest_phone}
                 </div>
-                {(order.address || order.street) && (
+                {/* Адрес в списке заказов */}
+                {(order.address || order.street || order.building) && (
                   <div style={{ fontSize: '11px', color: '#9ca3af' }}>
-                    {order.address || `${order.street}${order.building ? ', д.' + order.building : ''}${order.apartment ? ', кв.' + order.apartment : ''}`}
+                    {order.address || [order.street, order.building ? 'д.' + order.building : null, order.apartment ? 'кв.' + order.apartment : null, order.entrance ? 'под.' + order.entrance : null, order.floor ? 'эт.' + order.floor : null].filter(Boolean).join(', ')}
                   </div>
                 )}
                 <div style={{ marginTop: '6px', padding: '6px', background: 'white', borderRadius: '4px', fontSize: '11px' }}>
-                  {(order.items || []).slice(0, 2).map((item, idx) => (
-                    <div key={`${order.id}-${item.product_id}-${item.size_id || 'nosize'}-${idx}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '1px 0' }}>
-                      <span>{item.name || item.product_name} ×{item.quantity}</span>
-                      <span style={{ marginLeft: '6px' }}>{item.price * item.quantity} ₽</span>
-                    </div>
-                  ))}
-                  {(order.items || []).length > 2 && (
-                    <div style={{ fontSize: '10px', color: '#9ca3af' }}>
-                      +{(order.items.length - 2)}
+                  {/* Индикатор предзаказа */}
+                  {order.is_asap === 0 && (
+                    <div style={{ background: '#fef3c7', padding: '4px 8px', borderRadius: '4px', marginBottom: '6px', fontSize: '11px', color: '#92400e', fontWeight: '500' }}>
+                      📅 Предзаказ {order.delivery_date && `на ${new Date(order.delivery_date).toLocaleDateString('ru-RU')}`} {order.delivery_time && `к ${order.delivery_time}`}
                     </div>
                   )}
+                  {(order.items || []).map((item, idx) => (
+                    <div key={`${order.id}-${item.product_id}-${item.size_id || 'nosize'}-${idx}`} style={{ display: 'flex', flexDirection: 'column', padding: '2px 0', borderBottom: idx < (order.items || []).length - 1 ? '1px dashed #e5e7eb' : 'none' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span>{item.name || item.product_name} ×{item.quantity}</span>
+                        <span style={{ marginLeft: '6px' }}>{item.price * item.quantity} ₽</span>
+                      </div>
+                      {/* Размер */}
+                      {(item.size_name || item.size?.name) && (
+                        <span style={{ fontSize: '10px', color: '#0ea5e9', marginLeft: '8px' }}>Размер: {item.size_name || item.size?.name}</span>
+                      )}
+                      {/* Обычные допы */}
+                      {item.addons && item.addons.length > 0 && (
+                        <span style={{ fontSize: '10px', color: '#6b7280', marginLeft: '8px' }}>Допы: {item.addons.map(a => a.name).join(', ')}</span>
+                      )}
+                      {/* Допы к размеру */}
+                      {item.sizeAddons && item.sizeAddons.length > 0 && (
+                        <span style={{ fontSize: '10px', color: '#6b7280', marginLeft: '8px' }}>Допы к размеру: {item.sizeAddons.map(a => a.name).join(', ')}</span>
+                      )}
+                    </div>
+                  ))}
+                  {(order.items.length > 0 && (
+                    <div style={{ fontSize: '10px', color: '#9ca3af' }}>
+                      Всего товаров: {order.items.length}
+                    </div>
+                  ))}
                   <div style={{ marginTop: '4px', paddingTop: '4px', borderTop: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', fontWeight: '600', fontSize: '12px' }}>
                     <span>Итого:</span>
                     <span>{order.total_amount} ₽</span>
@@ -1063,13 +1306,34 @@ const Orders = () => {
                   value={order.status} 
                   onChange={(e) => updateStatus(order.id, e.target.value)}
                 >
-                  <option value="pending">Новый</option>
-                  <option value="processing">В обработке</option>
-                  <option value="ready">Готов</option>
-                  <option value="delivered">Доставлен</option>
-                  <option value="cancelled">Отменён</option>
+                  <option value="новый">Новый</option>
+                  <option value="в производстве">В производстве</option>
+                  <option value="произведен">Произведен</option>
+                  <option value="в пути">В пути</option>
+                  <option value="выполнен">Выполнен</option>
+                  <option value="отменён">Отменён</option>
                 </select>
                 <div style={{ display: 'flex', gap: '4px' }}>
+                  {(order.status === 'новый' || order.status === 'new' || order.status === 'pending') && (
+                    <>
+                      <button 
+                        className="btn btn-sm" 
+                        onClick={() => openAcceptModal(order)} 
+                        title="Принять заказ"
+                        style={{ padding: '4px 8px', background: '#10b981', color: 'white' }}
+                      >
+                        <Check size={14} /> Принять
+                      </button>
+                      <button 
+                        className="btn btn-sm" 
+                        onClick={() => handleRejectOrder(order.id)} 
+                        title="Отказать в заказе"
+                        style={{ padding: '4px 8px', background: '#ef4444', color: 'white' }}
+                      >
+                        <X size={14} /> Отказать
+                      </button>
+                    </>
+                  )}
                   <button className="btn btn-sm btn-secondary" onClick={() => handleShowDetails(order)} title="Детали" style={{ padding: '4px 8px' }}>
                     <Eye size={14} />
                   </button>
@@ -1091,14 +1355,183 @@ const Orders = () => {
                   padding: '2px 6px', 
                   borderRadius: '4px',
                   background: order.order_type === 'delivery' ? '#dbeafe' : '#fef3c7',
-                  color: order.order_type === 'delivery' ? '#1d4ed8' : '#92400e'
+                  color: order.order_type === 'delivery' ? '#1d4ed8' : '#92400e',
+                  display: 'flex',
+                  gap: '4px'
                 }}>
-                  {order.order_type === 'delivery' ? '🚚' : '🏃'}
+                  <span>{order.order_type === 'delivery' ? '🚚 Доставка' : '🏃 Самовывоз'}</span>
+                  <span>{order.payment === 'cash' ? '💵 Наличными при получении' : order.payment === 'card' ? '💳 Картой при получении' : order.payment === 'transfer' ? '📱 Переводом при получении' : '?'}</span>
                 </div>
+                {/* Отображение курьера */}
+                {(order.courier_name || order.courier_id) && (
+                  <div style={{ 
+                    fontSize: '10px', 
+                    padding: '2px 6px', 
+                    borderRadius: '4px',
+                    background: '#dcfce7',
+                    color: '#059669',
+                    marginTop: '4px',
+                    fontWeight: '500'
+                  }}>
+                    👤 {order.courier_name || (order.courier_id ? 'Курьер #' + order.courier_id : 'Не назначен')}
+                  </div>
+                )}
               </div>
             </div>
           ))}
         </div>
+        
+        {/* Выполненные заказы - показываем секцию даже если нет заказов (пользователь может изменить статус) */}
+        {true && (
+          <div style={{ marginTop: '16px', borderTop: '2px dashed #e5e7eb', paddingTop: '16px' }}>
+            <div 
+              style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'space-between',
+                cursor: 'pointer',
+                padding: '12px',
+                background: '#f3f4f6',
+                borderRadius: '8px',
+                marginBottom: showCompletedOrders ? '12px' : '0'
+              }}
+              onClick={() => setShowCompletedOrders(!showCompletedOrders)}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '600', color: '#4b5563' }}>
+                <span>{showCompletedOrders ? '▼' : '▶'}</span>
+                <History size={18} />
+                Выполненные заказы ({completedOrders.length})
+              </div>
+              <button 
+                className="btn btn-sm btn-secondary"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowCompletedOrders(!showCompletedOrders);
+                }}
+              >
+                {showCompletedOrders ? 'Свернуть' : 'Развернуть'}
+              </button>
+            </div>
+            
+            {showCompletedOrders && (
+              <div style={{ display: 'grid', gap: '10px' }}>
+                {completedOrders.map(order => (
+                  <div 
+                    key={order.id} 
+                    style={{ 
+                      background: order.status === 'выполнен' ? '#ffffff' : '#f3f4f6',
+                      border: `2px solid ${order.status === 'выполнен' ? '#9ca3af' : '#d1d5db'}`, 
+                      borderRadius: '10px', 
+                      padding: '12px',
+                      display: 'grid',
+                      gridTemplateColumns: 'auto 1fr auto',
+                      gap: '12px',
+                      alignItems: 'start',
+                      opacity: 0.8
+                    }}
+                  >
+                    <div style={{ textAlign: 'center', minWidth: '50px' }}>
+                      <div style={{ fontSize: '16px', fontWeight: '700', color: '#374151' }}>#{order.id}</div>
+                      <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>
+                        {getReadyTime(order)}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontWeight: '600', fontSize: '14px', marginBottom: '2px', color: '#6b7280' }}>
+                        {order.guest_name || 'Гость'}
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '2px' }}>
+                        {order.guest_phone}
+                      </div>
+                      {(order.address || order.street || order.building) && (
+                        <div style={{ fontSize: '11px', color: '#d1d5db' }}>
+                          {order.address || [order.street, order.building ? 'д.' + order.building : null, order.apartment ? 'кв.' + order.apartment : null].filter(Boolean).join(', ')}
+                        </div>
+                      )}
+                      <div style={{ marginTop: '6px', padding: '6px', background: 'white', borderRadius: '4px', fontSize: '11px' }}>
+                        {(order.items || []).map((item, idx) => (
+                          <div key={`${order.id}-${item.product_id}-${item.size_id || 'nosize'}-${idx}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                            <span style={{ color: '#6b7280' }}>{item.name || item.product_name} ×{item.quantity}</span>
+                            <span style={{ marginLeft: '6px', color: '#6b7280' }}>{item.price * item.quantity} ₽</span>
+                          </div>
+                        ))}
+                        {(order.items.length > 0 && (
+                          <div style={{ fontSize: '10px', color: '#9ca3af', marginTop: '4px' }}>
+                            Всего товаров: {order.items.length}
+                          </div>
+                        ))}
+                        <div style={{ marginTop: '4px', paddingTop: '4px', borderTop: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', fontWeight: '600', fontSize: '12px' }}>
+                          <span style={{ color: '#6b7280' }}>Итого:</span>
+                          <span>{order.total_amount} ₽</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
+                      <select 
+                        className="form-select form-select-sm" 
+                        style={{ minWidth: '110px', padding: '4px 8px', fontSize: '11px' }}
+                        value={order.status} 
+                        onChange={(e) => updateStatus(order.id, e.target.value)}
+                      >
+                        <option value="новый">Новый</option>
+                        <option value="в производстве">В производстве</option>
+                        <option value="произведен">Произведен</option>
+                        <option value="в пути">В пути</option>
+                        <option value="выполнен">Выполнен</option>
+                        <option value="отменён">Отменён</option>
+                      </select>
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        <button className="btn btn-sm btn-secondary" onClick={() => handleShowDetails(order)} title="Детали" style={{ padding: '4px 8px' }}>
+                          <Eye size={14} />
+                        </button>
+                        <button className="btn btn-sm btn-secondary" onClick={() => { handleEditOrder(order); setShowDetails(null); }} title="Редактировать" style={{ padding: '4px 8px' }}>
+                          <Edit2 size={14} />
+                        </button>
+                        <button className="btn btn-sm btn-secondary" onClick={() => printReceipt(order)} title="Печать" style={{ padding: '4px 8px' }}>
+                          <Printer size={14} />
+                        </button>
+                        <button className="btn btn-sm" onClick={() => openDiscountModal(order)} title="Скидка" style={{ padding: '4px 8px', background: (order.discount_amount > 0 ? '#10b981' : '#f59e0b'), color: 'white' }}>
+                          <Percent size={14} />
+                        </button>
+                        <button className="btn btn-sm btn-danger" onClick={() => deleteOrder(order.id)} title="Удалить" style={{ padding: '4px 8px' }}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                      <div style={{ 
+                        fontSize: '10px', 
+                        padding: '2px 6px', 
+                        borderRadius: '4px',
+                        background: order.order_type === 'delivery' ? '#dbeafe' : '#fef3c7',
+                        color: order.order_type === 'delivery' ? '#1d4ed8' : '#92400e',
+                        display: 'flex',
+                        gap: '4px'
+                      }}>
+                        <span>{order.order_type === 'delivery' ? '🚚 Доставка' : '🏃 Самовывоз'}</span>
+                        <span>{order.payment === 'cash' ? '💵 Наличными при получении' : order.payment === 'card' ? '💳 Картой при получении' : order.payment === 'transfer' ? '📱 Переводом при получении' : '?'}</span>
+                      </div>
+                      {/* Отображение курьера */}
+                      {(order.courier_name || order.courier_id) && (
+                        <div style={{ 
+                          fontSize: '10px', 
+                          padding: '2px 6px', 
+                          borderRadius: '4px',
+                          background: '#dcfce7',
+                          color: '#059669',
+                          marginTop: '4px',
+                          fontWeight: '500'
+                        }}>
+                          👤 {order.courier_name || (order.courier_id ? 'Курьер #' + order.courier_id : 'Не назначен')}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {orders.length === 0 && (
           <div style={{ textAlign: 'center', padding: '30px', color: '#9ca3af', fontSize: '13px' }}>
             Заказов пока нет
@@ -1521,15 +1954,74 @@ const Orders = () => {
                   <label className="form-label">Статус заказа</label>
                   <select
                     className="form-select"
-                    value={editOrder.status || 'pending'}
+                    value={editOrder.status || 'новый'}
                     onChange={(e) => setEditOrder({...editOrder, status: e.target.value})}
                   >
-                    <option value="pending">Новый</option>
-                    <option value="processing">В обработке</option>
-                    <option value="ready">Готов</option>
-                    <option value="delivered">Доставлен</option>
-                    <option value="cancelled">Отменён</option>
+                    <option value="новый">Новый</option>
+                    <option value="в производстве">В производстве</option>
+                    <option value="произведен">Произведен</option>
+                    <option value="в пути">В пути</option>
+                    <option value="выполнен">Выполнен</option>
+                    <option value="отменён">Отменён</option>
                   </select>
+                </div>
+                
+                {/* Секция выбора курьера */}
+                <div style={{ 
+                  background: editOrder.order_type === 'delivery' ? '#fef3c7' : '#f3f4f6', 
+                  padding: '16px', 
+                  borderRadius: '8px',
+                  marginBottom: '16px'
+                }}>
+                  <div style={{ fontWeight: '600', marginBottom: '12px', fontSize: '14px' }}>
+                    🚚 Назначение курьера
+                  </div>
+                  
+                  {editOrder.order_type === 'delivery' ? (
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end' }}>
+                      <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                        <label className="form-label">Выберите курьера</label>
+                        <select
+                          className="form-select"
+                          value={selectedCourierId}
+                          onChange={(e) => setSelectedCourierId(e.target.value)}
+                        >
+                          <option value="">-- Выберите курьера --</option>
+                          {couriers.map(courier => (
+                            <option key={courier.id} value={courier.id}>
+                              {courier.name} ({courier.phone})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <button 
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => assignCourier(editOrder.id, selectedCourierId)}
+                        disabled={!selectedCourierId}
+                        style={{ opacity: !selectedCourierId ? 0.5 : 1 }}
+                      >
+                        Назначить
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '13px', color: '#6b7280' }}>
+                      Курьер назначается только для заказов с доставкой
+                    </div>
+                  )}
+                  
+                  {/* Информация о текущем курьере */}
+                  {(editOrder.courier_id || editOrder.courier_name) && (
+                    <div style={{ 
+                      marginTop: '12px', 
+                      padding: '8px 12px', 
+                      background: '#dcfce7', 
+                      borderRadius: '6px',
+                      fontSize: '13px'
+                    }}>
+                      <strong>Текущий курьер:</strong> {editOrder.courier_name || (editOrder.courier_id ? 'Курьер #' + editOrder.courier_id : 'Не назначен')}
+                    </div>
+                  )}
                 </div>
                 <div className="form-group">
                   <label className="form-label">Комментарий</label>
@@ -1560,6 +2052,18 @@ const Orders = () => {
                       >
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                           <span style={{ fontWeight: '500' }}>{item.name || item.product_name}</span>
+                          {/* Размер */}
+                          {item.size && (
+                            <span style={{ fontSize: '11px', color: '#6b7280' }}>Размер: {item.size.name}</span>
+                          )}
+                          {/* Обычные допы */}
+                          {item.addons && item.addons.length > 0 && (
+                            <span style={{ fontSize: '11px', color: '#6b7280' }}>Допы: {item.addons.map(a => a.name).join(', ')}</span>
+                          )}
+                          {/* Допы к размеру */}
+                          {item.sizeAddons && item.sizeAddons.length > 0 && (
+                            <span style={{ fontSize: '11px', color: '#6b7280' }}>Допы к размеру: {item.sizeAddons.map(a => a.name).join(', ')}</span>
+                          )}
                           <span style={{ fontSize: '12px', color: '#6b7280' }}>
                             {item.price} ₽ × {item.quantity} шт.
                           </span>
@@ -1687,19 +2191,21 @@ const Orders = () => {
                         <div><strong>Телефон:</strong> {showDetails.guest_phone}</div>
                         <div><strong>Тип:</strong> {showDetails.order_type === 'delivery' ? '🚚 Доставка' : '🏃 Самовывоз'}</div>
                         <div><strong>Оплата:</strong> {
-                          showDetails.payment === 'cash' ? '💵 Наличные' : 
-                          showDetails.payment === 'card' ? '💳 Карта' : '💻 Онлайн'
+                          showDetails.payment === 'cash' ? '💵 Наличными при получении' :
+                          showDetails.payment === 'card' ? '💳 Картой при получении' :
+                          showDetails.payment === 'transfer' ? '📱 Переводом при получении' : '?'
                         }</div>
                         <div><strong>Статус:</strong> {getStatusBadge(showDetails.status)}</div>
                         <div><strong>Дата:</strong> {new Date(showDetails.created_at).toLocaleString('ru-RU')}</div>
                       </div>
                     </div>
                     
-                    {(showDetails.address || showDetails.street) && (
+                    {/* Адрес в деталях заказа */}
+                    {(showDetails.address || showDetails.street || showDetails.building) && (
                       <div style={{ background: '#f9fafb', padding: '12px', borderRadius: '8px' }}>
                         <div style={{ fontWeight: '600', marginBottom: '8px', fontSize: '14px' }}>Адрес доставки</div>
                         <div style={{ fontSize: '13px' }}>
-                          {showDetails.address || `${showDetails.street}${showDetails.building ? ', д.' + showDetails.building : ''}${showDetails.apartment ? ', кв.' + showDetails.apartment : ''}`}
+                          {showDetails.address || [showDetails.street, showDetails.building ? 'д.' + showDetails.building : null, showDetails.apartment ? 'кв.' + showDetails.apartment : null, showDetails.entrance ? 'под.' + showDetails.entrance : null, showDetails.floor ? 'эт.' + showDetails.floor : null, showDetails.intercom ? 'домофон: ' + showDetails.intercom : null].filter(Boolean).join(', ')}
                         </div>
                       </div>
                     )}
@@ -1715,9 +2221,23 @@ const Orders = () => {
                       <div style={{ fontWeight: '600', marginBottom: '8px', fontSize: '14px' }}>Состав заказа</div>
                       <div style={{ display: 'grid', gap: '6px' }}>
                         {showDetails.items && showDetails.items.map((item, idx) => (
-                          <div key={`${item.product_id}-${item.size_id || 'nosize'}-${idx}`} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '4px 0', borderBottom: '1px dashed #e5e7eb' }}>
-                            <span>{item.name || item.product_name} ×{item.quantity}</span>
-                            <span style={{ fontWeight: '500' }}>{item.price * item.quantity} ₽</span>
+                          <div key={`${item.product_id}-${item.size_id || 'nosize'}-${idx}`} style={{ display: 'flex', flexDirection: 'column', fontSize: '13px', padding: '4px 0', borderBottom: '1px dashed #e5e7eb' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <span>{item.name || item.product_name} ×{item.quantity}</span>
+                              <span style={{ fontWeight: '500' }}>{item.price * item.quantity} ₽</span>
+                            </div>
+                            {/* Размер */}
+                            {item.size && (
+                              <span style={{ fontSize: '11px', color: '#6b7280', marginLeft: '8px' }}>Размер: {item.size.name}</span>
+                            )}
+                            {/* Обычные допы */}
+                            {item.addons && item.addons.length > 0 && (
+                              <span style={{ fontSize: '11px', color: '#6b7280', marginLeft: '8px' }}>Допы: {item.addons.map(a => a.name).join(', ')}</span>
+                            )}
+                            {/* Допы к размеру */}
+                            {item.sizeAddons && item.sizeAddons.length > 0 && (
+                              <span style={{ fontSize: '11px', color: '#6b7280', marginLeft: '8px' }}>Допы к размеру: {item.sizeAddons.map(a => a.name).join(', ')}</span>
+                            )}
                           </div>
                         ))}
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '700', fontSize: '15px', marginTop: '8px', paddingTop: '8px', borderTop: '2px solid #10b981' }}>
@@ -1853,7 +2373,7 @@ const Orders = () => {
                 <div style={{ fontSize: '20px', fontWeight: '700' }}>{discountModal.total_amount} ₽</div>
                 <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '8px' }}>
                   <span style={{ background: discountModal.payment === 'cash' ? '#dbeafe' : '#fef3c7', padding: '2px 8px', borderRadius: '4px' }}>
-                    {discountModal.payment === 'cash' ? '💵 Наличные' : discountModal.payment === 'card' ? '💳 Карта' : '💻 Онлайн'}
+                    {discountModal.payment === 'cash' ? '💵 Наличными при получении' : discountModal.payment === 'card' ? '💳 Картой при получении' : discountModal.payment === 'transfer' ? '📱 Переводом при получении' : '?'}
                   </span>
                   <span style={{ background: discountModal.order_type === 'pickup' ? '#fef3c7' : '#dbeafe', padding: '2px 8px', borderRadius: '4px', marginLeft: '8px' }}>
                     {discountModal.order_type === 'pickup' ? '🏃 Самовывоз' : '🚚 Доставка'}
@@ -1965,6 +2485,113 @@ const Orders = () => {
                 }}
               >
                 Применить скидку
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Модальное окно принятия заказа с выбором времени готовности */}
+      {acceptModal && (
+        <div className="modal-overlay" onClick={() => setAcceptModal(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px' }}>
+            <div className="modal-header">
+              <h3 className="modal-title">Принять заказ #{acceptModal.id}</h3>
+              <button className="btn btn-sm btn-secondary" onClick={() => setAcceptModal(null)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="modal-body">
+              {/* Информация о заказе */}
+              <div style={{ marginBottom: '16px', padding: '12px', background: '#f9fafb', borderRadius: '8px' }}>
+                <div style={{ fontSize: '13px', color: '#6b7280' }}>Клиент:</div>
+                <div style={{ fontWeight: '600' }}>{acceptModal.guest_name || 'Гость'}</div>
+                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>{acceptModal.guest_phone}</div>
+                <div style={{ fontSize: '14px', fontWeight: '600', marginTop: '8px' }}>Сумма: {acceptModal.total_amount} ₽</div>
+              </div>
+
+              {/* Выбор времени готовности */}
+              <div className="form-group">
+                <label className="form-label">Время готовности заказа</label>
+                <input
+                  type="time"
+                  className="form-input"
+                  value={readyTime}
+                  onChange={(e) => setReadyTime(e.target.value)}
+                  style={{ fontSize: '18px', padding: '12px', textAlign: 'center' }}
+                />
+                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '8px', textAlign: 'center' }}>
+                  Укажите, через сколько заказ будет готов
+                </div>
+              </div>
+
+              {/* Быстрые варианты времени */}
+              <div style={{ marginTop: '16px' }}>
+                <div style={{ fontSize: '13px', fontWeight: '600', marginBottom: '8px' }}>Быстрый выбор:</div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{ background: '#10b981', color: 'white', padding: '8px 12px' }}
+                    onClick={() => {
+                      const now = new Date();
+                      now.setMinutes(now.getMinutes() + 15);
+                      setReadyTime(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
+                    }}
+                  >
+                    15 мин
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{ background: '#10b981', color: 'white', padding: '8px 12px' }}
+                    onClick={() => {
+                      const now = new Date();
+                      now.setMinutes(now.getMinutes() + 30);
+                      setReadyTime(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
+                    }}
+                  >
+                    30 мин
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{ background: '#10b981', color: 'white', padding: '8px 12px' }}
+                    onClick={() => {
+                      const now = new Date();
+                      now.setMinutes(now.getMinutes() + 45);
+                      setReadyTime(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
+                    }}
+                  >
+                    45 мин
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{ background: '#10b981', color: 'white', padding: '8px 12px' }}
+                    onClick={() => {
+                      const now = new Date();
+                      now.setMinutes(now.getMinutes() + 60);
+                      setReadyTime(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
+                    }}
+                  >
+                    1 час
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button type="button" className="btn btn-secondary" onClick={() => setAcceptModal(null)}>
+                Отмена
+              </button>
+              <button 
+                type="button" 
+                className="btn btn-primary"
+                onClick={handleAcceptOrder}
+                disabled={!readyTime}
+                style={{ opacity: !readyTime ? 0.5 : 1 }}
+              >
+                <Check size={16} /> Принять заказ
               </button>
             </div>
           </div>

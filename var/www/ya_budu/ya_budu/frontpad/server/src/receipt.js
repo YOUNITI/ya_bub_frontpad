@@ -18,7 +18,7 @@ const __dirname = path.dirname(__filename);
 // Определяем ОС
 const isWindows = os.platform() === 'win32';
 
-// Конфигурация принтера (проверяется динамически)
+// Конфигурация принтера (проверяется динамиically)
 const PRINTER_CONFIG = {
   // Имя принтера - из переменной окружения или по умолчанию
   printerName: process.env.PRINTER_NAME || (isWindows ? 'Microsoft Print to PDF' : 'receipt_printer'),
@@ -28,6 +28,51 @@ const PRINTER_CONFIG = {
     // Проверяем переменную окружения или можно добавить проверку настройки из БД
     return process.env.SERVER_PRINT_ENABLED === 'true';
   }
+};
+
+// Настройки чека по умолчанию
+const DEFAULT_RECEIPT_SETTINGS = {
+  receipt_width: '80mm',
+  receipt_type: 'receipt',
+  font_size: '14',
+  print_contrast: '5',
+  receipt_logo: '',
+  receipt_title: 'Я Буду',
+  receipt_header_line1: '',
+  receipt_header_line2: '',
+  receipt_header_line3: '',
+  receipt_header_line4: ''
+};
+
+// Получить настройки чека (объединяет настройки из БД с умолчаниями)
+async function getReceiptSettings(db) {
+  try {
+    if (!db) return DEFAULT_RECEIPT_SETTINGS;
+    
+    const settings = {};
+    const keys = Object.keys(DEFAULT_RECEIPT_SETTINGS);
+    
+    for (const key of keys) {
+      try {
+        const result = await db.get(`SELECT value FROM settings WHERE \`key\` = ?`, [key]);
+        settings[key] = result?.value || DEFAULT_RECEIPT_SETTINGS[key];
+      } catch (e) {
+        settings[key] = DEFAULT_RECEIPT_SETTINGS[key];
+      }
+    }
+    
+    return settings;
+  } catch (e) {
+    console.log('[Receipt] Ошибка получения настроек:', e.message);
+    return DEFAULT_RECEIPT_SETTINGS;
+  }
+}
+
+// Ширина чеков в пикселях (при 96 DPI)
+const RECEIPT_WIDTHS = {
+  '50mm': 189,  // ~50mm при 96 DPI
+  '58mm': 220,  // ~58mm при 96 DPI
+  '80mm': 303   // ~80mm при 96 DPI
 };
 
 // Функция серверной печати (Windows через PowerShell или Linux через CUPS)
@@ -137,8 +182,78 @@ function parseAddress(address) {
   return result;
 }
 
-// Функция генерации чека (возвращает HTML)
-function generateReceiptHTML(order, items) {
+// Генерация стилей чека на основе настроек
+function generateReceiptStyles(settings) {
+  const width = RECEIPT_WIDTHS[settings.receipt_width] || RECEIPT_WIDTHS['80mm'];
+  const fontSize = parseInt(settings.font_size) || 14;
+  const contrast = parseInt(settings.print_contrast) || 5;
+  
+  // Рассчитываем контрастность (от 0.3 до 1.0)
+  const opacity = 0.3 + (contrast / 10) * 0.7;
+  
+  return `
+    @page { size: ${settings.receipt_width} auto; margin: 0; }
+    body { 
+      font-family: 'Courier New', monospace; 
+      font-size: ${fontSize}px; 
+      width: ${width}px; 
+      margin: 0; 
+      padding: 10px;
+      color: rgba(0, 0, 0, ${opacity});
+      box-sizing: border-box;
+    }
+    .center { text-align: center; }
+    .bold { font-weight: bold; }
+    .line { border-top: 2px dashed rgba(0, 0, 0, ${opacity}); margin: 8px 0; }
+    .line-solid { border-top: 2px solid rgba(0, 0, 0, ${opacity}); margin: 8px 0; }
+    table { width: 100%; border-collapse: collapse; }
+    .receipt-table td { padding: 4px 0; font-weight: bold; }
+    .receipt-table th { padding: 4px 0; font-weight: bold; border-bottom: 2px solid rgba(0, 0, 0, ${opacity}); }
+    .total-row { font-weight: bold; font-size: ${fontSize + 2}px; }
+    .header-text { font-weight: bold; }
+    @media print { 
+      body { width: ${width}px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      @page { size: ${settings.receipt_width} auto; margin: 0; }
+    }
+  `;
+}
+
+// Генерация HTML заголовка чека
+function generateReceiptHeader(settings) {
+  let headerHTML = '';
+  
+  // Логотип
+  if (settings.receipt_logo) {
+    headerHTML += `<img src="${SITE_URL}${settings.receipt_logo}" alt="Logo" style="max-width: ${RECEIPT_WIDTHS[settings.receipt_width] * 0.6}px; max-height: 60px; margin-bottom: 8px;" onerror="this.style.display='none'">`;
+  }
+  
+  // Название
+  if (settings.receipt_title) {
+    headerHTML += `<div class="header-text" style="font-size: 16px; margin-bottom: 4px;">${settings.receipt_title}</div>`;
+  }
+  
+  // Дополнительные поля (только если заполнены)
+  const headerFields = [
+    settings.receipt_header_line1,
+    settings.receipt_header_line2,
+    settings.receipt_header_line3,
+    settings.receipt_header_line4
+  ].filter(field => field && field.trim() !== '');
+  
+  if (headerFields.length > 0) {
+    headerFields.forEach(field => {
+      headerHTML += `<div class="header-text" style="font-size: 12px;">${field}</div>`;
+    });
+  }
+  
+  return headerHTML;
+}
+
+// Генерация чека (возвращает HTML)
+function generateReceiptHTML(order, items, settings = {}) {
+  // Объединяем настройки с умолчаниями
+  const receiptSettings = { ...DEFAULT_RECEIPT_SETTINGS, ...settings };
+  
   const payment = order.payment === 'cash' ? 'Наличные' : order.payment === 'card' ? 'Карта' : 'Онлайн';
   const addr = parseAddress(order.address);
   
@@ -160,36 +275,32 @@ function generateReceiptHTML(order, items) {
   const discountAmount = parseFloat(order.discount_amount || 0);
   const finalAmount = totalAmount - discountAmount;
   
-  const logoHTML = `<img src="${SITE_URL}/uploads/logo.jpg" alt="Logo" style="max-width: 80px; max-height: 60px; margin-bottom: 8px;" onerror="this.style.display='none'">`;
+  const logoHTML = generateReceiptHeader(receiptSettings);
+  const styles = generateReceiptStyles(receiptSettings);
+  
+  // Заголовок чека
+  let receiptTitle = 'Чек заказа';
+  switch (receiptSettings.receipt_type) {
+    case 'goods':
+      receiptTitle = 'Товарный чек';
+      break;
+    case 'goods_double':
+      receiptTitle = 'Товарный чек (1/2)';
+      break;
+    case 'assembly':
+      receiptTitle = 'Накладная на сборку';
+      break;
+    default:
+      receiptTitle = 'Чек заказа';
+  }
   
   const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Чек заказа #${order.id}</title>
+  <title>${receiptTitle} #${order.id}</title>
   <style>
-    @page { size: 80mm auto; margin: 0; }
-    body { 
-      font-family: 'Courier New', monospace; 
-      font-size: 14px; 
-      width: 80mm; 
-      margin: 0; 
-      padding: 10px;
-      color: #000;
-      box-sizing: border-box;
-    }
-    .center { text-align: center; }
-    .bold { font-weight: bold; }
-    .line { border-top: 2px dashed #000; margin: 8px 0; }
-    .line-solid { border-top: 2px solid #000; margin: 8px 0; }
-    table { width: 100%; border-collapse: collapse; }
-    .receipt-table td { padding: 4px 0; font-weight: bold; }
-    .receipt-table th { padding: 4px 0; font-weight: bold; border-bottom: 2px solid #000; }
-    .total-row { font-weight: bold; font-size: 16px; }
-    @media print { 
-      body { width: 80mm; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-      @page { size: 80mm auto; margin: 0; }
-    }
+    ${styles}
   </style>
 </head>
 <body>
@@ -261,10 +372,13 @@ function generateReceiptHTML(order, items) {
   return html;
 }
 
+// Экспорт функций для использования с настройками из БД
 export { 
   generateReceiptHTML,
   printToPrinter,
   printReceiptSync,
   PRINTER_CONFIG,
-  isWindows
+  isWindows,
+  DEFAULT_RECEIPT_SETTINGS,
+  getReceiptSettings
 };

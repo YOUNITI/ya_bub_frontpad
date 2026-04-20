@@ -13,8 +13,19 @@ const getImageUrl = (imageUrl, productName = '') => {
     const textColor = 'fbd38d';
     return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect fill="%23${bgColor}" width="400" height="300"/><text fill="%23${textColor}" font-family="Arial" font-size="24" x="50%25" y="50%25" text-anchor="middle" dy=".3em">${encodedName}</text><text fill="%23${textColor}" font-family="Arial" font-size="14" x="50%25" y="65%25" text-anchor="middle" opacity="0.7">No photo</text></svg>`)}`;
   }
+  // Извлекаем относительный путь из полного URL если сохранён с доменом
   if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
-    return imageUrl;
+    // Пытаемся извлечь путь из полного URL
+    const match = imageUrl.match(/(\/uploads\/.*)$/);
+    if (match) {
+      imageUrl = match[1];
+    } else {
+      // Если не можем извлечь - возвращаем placeholder
+      const encodedName = encodeURIComponent(productName || 'Нет фото');
+      const bgColor = '2d3748';
+      const textColor = 'fbd38d';
+      return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect fill="%23${bgColor}" width="400" height="300"/><text fill="%23${textColor}" font-family="Arial" font-size="24" x="50%" y="50%" text-anchor="middle" dy=".3em">${encodedName}</text><text fill="%23${textColor}" font-family="Arial" font-size="14" x="50%" y="65%" text-anchor="middle" opacity="0.7">No photo</text></svg>`)}`;
+    }
   }
   const cleanPath = imageUrl.replace(/^\/uploads\//, '').replace(/^\/+/, '');
   return `${IMAGE_BASE_URL}${cleanPath}`;
@@ -73,12 +84,27 @@ const Menu = () => {
         const featuredData = await featuredRes.json();
         
         setMenuItems(productsData);
-        setCategories(categoriesData);
+        
+        // Fallback: если категории пустые, создаём их из товаров
+        let finalCategories = categoriesData;
+        if (!categoriesData || categoriesData.length === 0) {
+          // Извлекаем уникальные категории из товаров
+          const uniqueCategories = [...new Set(productsData.map(p => p.category_name).filter(Boolean))];
+          finalCategories = uniqueCategories.map((name, index) => ({
+            id: name, // используем имя как id для фильтрации
+            name: name,
+            sort_order: index
+          }));
+          console.log('[Menu] Fallback: категории созданы из товаров:', finalCategories);
+        }
+        
+        setCategories(finalCategories);
         setFeaturedProducts(featuredData || []);
         
         const optionsCache = {};
         const sizeAddonsData = optionsData.size_addons || {};
         
+        // Обрабатываем ВСЕ товары из основного меню
         for (const product of productsData) {
           const sizes = optionsData.sizes[product.id] || [];
           const addons = optionsData.addons[product.id] || [];
@@ -103,6 +129,36 @@ const Menu = () => {
                 sizeAddons: []
               }
             }));
+          }
+        }
+        
+        // Также обрабатываем избранные товары, которые могут отличаться
+        for (const product of featuredData || []) {
+          if (!optionsCache[product.id]) {
+            const sizes = optionsData.sizes[product.id] || [];
+            const addons = optionsData.addons[product.id] || [];
+            
+            const sizesWithAddons = sizes.map(size => ({
+              ...size,
+              addons: sizeAddonsData[size.id] || []
+            }));
+            
+            optionsCache[product.id] = { 
+              sizes: sizesWithAddons, 
+              addons,
+              allAddons: addons 
+            };
+            
+            if (sizesWithAddons.length > 0) {
+              setSelectedOptions(prev => ({
+                ...prev,
+                [product.id]: {
+                  size: sizesWithAddons[0],
+                  addons: [],
+                  sizeAddons: []
+                }
+              }));
+            }
           }
         }
         
@@ -238,10 +294,9 @@ const Menu = () => {
     const basePrice = parseFloat(options.size?.price) || parseFloat(product.price) || 0;
     const sizeModifier = parseFloat(options.size?.price_modifier) || 0;
     const addonsPrice = (options.addons || []).reduce((sum, a) => sum + (parseFloat(a.price) || 0), 0);
+    // Для size_addons используем ТОЛЬКО price_modifier (это цена допа для конкретного размера)
     const sizeAddonsPrice = (options.sizeAddons || []).reduce((sum, a) => {
-      const addonPrice = parseFloat(a.price) || 0;
-      const modifier = parseFloat(a.price_modifier) || 0;
-      return sum + addonPrice + modifier;
+      return sum + (parseFloat(a.price_modifier) || 0);
     }, 0);
     const finalPrice = basePrice + sizeModifier + addonsPrice + sizeAddonsPrice;
     
@@ -266,10 +321,9 @@ const Menu = () => {
     const basePrice = sizePrice > 0 ? sizePrice : (parseFloat(product.price) || 0);
     const sizeModifier = parseFloat(options.size?.price_modifier) || 0;
     const addonsPrice = (options.addons || []).reduce((sum, a) => sum + (parseFloat(a.price) || 0), 0);
+    // Для size_addons используем ТОЛЬКО price_modifier (это цена допа для конкретного размера)
     const sizeAddonsPrice = (options.sizeAddons || []).reduce((sum, a) => {
-      const addonPrice = parseFloat(a.price) || 0;
-      const modifier = parseFloat(a.price_modifier) || 0;
-      return sum + addonPrice + modifier;
+      return sum + (parseFloat(a.price_modifier) || 0);
     }, 0);
     const finalPrice = basePrice + sizeModifier + addonsPrice + sizeAddonsPrice;
     
@@ -278,7 +332,7 @@ const Menu = () => {
 
   const filteredItems = activeCategory === 'all' 
     ? menuItems 
-    : menuItems.filter(item => item.category_id == activeCategory);
+    : menuItems.filter(item => item.category_id == activeCategory || item.category_name === activeCategory);
 
   return (
     <div className="py-16 bg-white">
@@ -300,7 +354,11 @@ const Menu = () => {
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {featuredProducts.map((item) => {
-                const finalPrice = parseFloat(item.price) || 0;
+                const options = productOptions[item.id] || { sizes: [], addons: [] };
+                const selected = selectedOptions[item.id] || { size: null, addons: [], sizeAddons: [] };
+                const finalPrice = getProductFinalPrice(item);
+                const hasSizeError = validationErrors[item.id]?.size;
+                
                 return (
                   <div 
                     key={item.id} 
@@ -316,7 +374,98 @@ const Menu = () => {
                     <div className="p-5">
                       <h3 className="text-xl font-bold font-heading text-white mb-2">{item.name}</h3>
                       <p className="text-gray-300 mb-3 text-sm">{item.description}</p>
-                      <div className="flex justify-between items-center">
+                      
+                      {/* Sizes for featured products */}
+                      {options.sizes.length > 0 && (
+                        <div className="mb-3">
+                          <p className="text-xs text-gray-400 mb-2">Размер:</p>
+                          <div className="flex flex-wrap gap-2 mb-2">
+                            {options.sizes.map(size => {
+                              const isSelected = selected.size?.id === size.id;
+                              return (
+                                <button
+                                  key={size.id}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleSizeSelect(item.id, size);
+                                  }}
+                                  className={`px-2 py-1 text-xs rounded-full border transition-colors ${
+                                    isSelected
+                                      ? 'bg-brand-yellow text-brand-black border-brand-yellow'
+                                      : hasSizeError
+                                        ? 'bg-red-900 text-red-200 border-red-500'
+                                        : 'bg-gray-700 text-gray-300 border-gray-600 hover:border-brand-yellow'
+                                  }`}
+                                >
+                                  {size.name} {size.price_modifier > 0 ? `+${size.price_modifier}` : ''}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          
+                          {/* Size-addons button for featured */}
+                          {selected.size && (() => {
+                            const sizeAddons = selected.size?.addons || [];
+                            const currentAddon = selected.sizeAddons?.[0];
+                            const hasAddons = sizeAddons.length > 0;
+                            
+                            if (!hasAddons) return null;
+                            
+                            return (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (currentAddon) {
+                                    handleSizeAddonToggle(item.id, currentAddon);
+                                  } else {
+                                    handleSizeAddonToggle(item.id, sizeAddons[0]);
+                                  }
+                                }}
+                                className={`w-full px-2 py-1 text-xs rounded-lg border transition-colors ${
+                                  currentAddon
+                                    ? 'bg-green-600 text-white border-green-500'
+                                    : 'bg-gray-700 text-gray-300 border-gray-600 hover:border-green-500'
+                                }`}
+                              >
+                                {currentAddon 
+                                  ? `OK ${currentAddon.name} (+${currentAddon.price_modifier || currentAddon.price || 0} P)`
+                                  : `+ ${sizeAddons.map(a => a.name).join(', ')}`
+                                }
+                              </button>
+                            );
+                          })()}
+                        </div>
+                      )}
+                      
+                      {/* Addons for featured products */}
+                      {options.addons.length > 0 && (
+                        <div className="mb-3">
+                          <p className="text-xs text-gray-400 mb-2">Допы:</p>
+                          <div className="flex flex-wrap gap-1">
+                            {options.addons.map(addon => {
+                              const isSelected = (selected.addons || []).some(a => a.id === addon.id);
+                              return (
+                                <button
+                                  key={addon.id}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleAddonToggle(item.id, addon);
+                                  }}
+                                  className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
+                                    isSelected
+                                      ? 'bg-brand-yellow text-brand-black border-brand-yellow'
+                                      : 'bg-gray-700 text-gray-300 border-gray-600 hover:border-brand-yellow'
+                                  }`}
+                                >
+                                  {addon.name} +{addon.price}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                      
+                      <div className="flex justify-between items-center mt-3">
                         <span className="text-brand-yellow text-2xl font-bold">{finalPrice} P</span>
                         <button
                           onClick={(e) => {

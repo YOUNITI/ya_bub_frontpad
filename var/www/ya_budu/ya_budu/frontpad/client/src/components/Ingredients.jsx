@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Edit, Trash2, Package, AlertTriangle, Download, Upload, X, FileSpreadsheet } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
-// Используем localhost для локальной разработки
-const FRONTPAD_API = process.env.REACT_APP_FONTPAD_API || 'http://localhost:3005';
+// Используем относительный путь для работы через nginx
+const FRONTPAD_API = process.env.REACT_APP_FONTPAD_API || '';
 
 const UNIT_TYPES = ['шт', 'г', 'кг', 'мл', 'л', 'ч.л.', 'ст.л.', 'стакан', 'пучок', 'зубчик', 'ломтик', 'кусок', 'пласт', 'уп'];
 

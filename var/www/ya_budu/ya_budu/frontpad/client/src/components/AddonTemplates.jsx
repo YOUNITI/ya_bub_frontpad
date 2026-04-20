@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Edit2, Trash2, X, CheckCircle } from 'lucide-react';
 import axios from 'axios';
 
-// Для локальной разработки используем localhost:3005
-const FRONTPAD_API = process.env.REACT_APP_FONTPAD_API || 'http://localhost:3005';
+// Используем относительный путь для работы через nginx
+const FRONTPAD_API = process.env.REACT_APP_FONTPAD_API || '';
 
 const AddonTemplates = () => {
   const [templates, setTemplates] = useState([]);

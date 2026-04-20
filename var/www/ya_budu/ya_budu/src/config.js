@@ -1,26 +1,48 @@
 // API для сайта - использует Frontpad API (MySQL)
-// Для продакшена используем относительные пути (nginx проксирует)
+// Конфигурация для продакшена - используем относительные пути (nginx проксирует)
 
-// Vite environment variables (from .env file)
-// Переменные окружения Vite (из файла .env)
-const API_URL_FULL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
-// Используем VITE_WS_URL для полного URL, или вычисляем порт
-const WS_URL_FULL = import.meta.env.VITE_WS_URL || 'ws://localhost:3005';
-// Извлекаем порт из VITE_WS_URL если задан, иначе используем 3005
-const WS_PORT = WS_URL_FULL 
-  ? (WS_URL_FULL.match(/:(\d+)/)?.[1] || 3005) 
-  : 3005;
+// В продакшене (production) используем:
+// - API: пустой путь (relative) - /api... 
+// - WS: /ws (относительный путь)
+// - Image: /uploads/
 
-const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+// Статические экспорты для совместимости с импортами
+// Эти значения будут работать в браузере благодаря Vite
+export const API_BASE_URL = '';
+export const WS_URL = '/ws';
+export const IMAGE_BASE_URL = '/uploads/';
 
-export const API_BASE_URL = isDev 
-  ? API_URL_FULL 
-  : '';  // Пустая строка - relative path
+// Функции для динамического получения URL (если нужно)
+export function getApiBaseUrl() {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+  const hostname = window.location.hostname;
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    return 'http://localhost:3001';
+  }
+  return '';
+}
 
-export const WS_URL = isDev 
-  ? `${WS_URL_FULL}/ws` 
-  : `ws://${window.location.host}/ws`;
+export function getWsUrl() {
+  if (typeof window === 'undefined') {
+    return '/ws';
+  }
+  const hostname = window.location.hostname;
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    return 'ws://localhost:3005/ws';
+  }
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/ws`;
+}
 
-export const IMAGE_BASE_URL = isDev 
-  ? `${API_URL_FULL}/uploads/` 
-  : '/uploads/';
+export function getImageBaseUrl() {
+  if (typeof window === 'undefined') {
+    return '/uploads/';
+  }
+  const hostname = window.location.hostname;
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    return 'http://localhost:3001/uploads/';
+  }
+  return '/uploads/';
+}

@@ -1,8 +1,16 @@
 // Унифицированный модуль базы данных для Frontpad
 // Поддерживает SQLite и MySQL через DB_TYPE
 
-// Загружаем переменные окружения в первую очередь
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Явно загружаем .env из папки server с приоритетом
+// Путь: из src/ поднимаемся на 3 уровня вверх (../../../) до корня проекта, затем в frontpad/server/
+dotenv.config({ path: path.resolve(__dirname, '../../../frontpad/server/.env'), override: true });
 
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
@@ -88,12 +96,15 @@ export async function get(sql, params = []) {
 }
 
 export async function run(sql, params = []) {
+  // Преобразуем undefined в null для MySQL
+  const safeParams = params.map(p => p === undefined ? null : p);
+  
   if (dbType === 'mysql') {
     // Используем execute() для prepared statements
-    const [result] = await pool.execute(sql, params);
+    const [result] = await pool.execute(sql, safeParams);
     return { lastID: result.insertId, changes: result.affectedRows };
   } else {
-    return await dbConnection.run(sql, params);
+    return await dbConnection.run(sql, safeParams);
   }
 }
 

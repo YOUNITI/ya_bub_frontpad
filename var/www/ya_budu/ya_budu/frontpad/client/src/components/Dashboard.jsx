@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { ShoppingCart, DollarSign, Users, Package, TrendingUp, Clock } from 'lucide-react';
 
-// Используем localhost для локальной разработки
-const FRONTPAD_API = process.env.REACT_APP_FONTPAD_API || 'http://localhost:3005';
+// Используем относительный путь для работы через nginx
+const FRONTPAD_API = process.env.REACT_APP_FONTPAD_API || '';
 
 const Dashboard = () => {
   const [stats, setStats] = useState(null);
@@ -96,7 +96,7 @@ const Dashboard = () => {
         <div className="stat-card">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <div>
-              <div className="stat-label">В обработке</div>
+              <div className="stat-label">В производстве</div>
               <div className="stat-value">{stats?.pending_orders?.count || 0}</div>
               <div style={{ color: '#f59e0b', marginTop: '4px', fontSize: '14px' }}>
                 требуют внимания

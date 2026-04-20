@@ -17,7 +17,7 @@ dotenv.config({ path: path.join(__dirname, '.env') });
 export const SITE_URL = process.env.SITE_URL || 'http://localhost:3001';
 
 // URL Frontpad (админ-панель)
-export const FRONTPAD_URL = process.env.FRONTPAD_URL || 'http://localhost:3005';
+export const FRONTPAD_URL = process.env.FRONTPAD_URL || 'https://fp.xn--90ag8bb0d.com';
 
 // Порты
 export const SITE_PORT = parseInt(process.env.PORT) || 3001;
@@ -31,8 +31,24 @@ export const FRONTPAD_SYNC_TOKEN = process.env.FRONTPAD_SYNC_TOKEN || 'change-sy
 export const SITE_SYNC_TOKEN = process.env.SITE_SYNC_TOKEN || 'change-sync-token-in-production';
 
 // URL для WebSocket
-export const WS_URL = process.env.WS_URL || 
-  `${process.env.NODE_ENV === 'production' ? 'wss://' : 'ws://'}localhost:3005/ws`;
+// В production используем wss:// для HTTPS
+const getWsUrl = () => {
+  // Если есть переменная окружения - используем её
+  if (process.env.WS_URL) return process.env.WS_URL;
+  
+  // Определяем протокол: wss для https, ws для http
+  // При сборке используем 'production' как индикатор
+  const isProduction = process.env.NODE_ENV === 'production';
+  const protocol = isProduction ? 'wss://' : 'ws://';
+  
+  // В development используем localhost, в production - домен
+  if (isProduction) {
+    return 'wss://ябуду.com/ws';
+  }
+  return 'ws://localhost:3005/ws';
+};
+
+export const WS_URL = getWsUrl();
 
 // Синхронизация между сайтом и Frontpad (включена/выключена)
 export const SYNC_ENABLED = process.env.SYNC_ENABLED !== 'false';

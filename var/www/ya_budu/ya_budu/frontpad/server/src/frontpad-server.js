@@ -31,13 +31,13 @@ const storage = multer.memoryStorage();
 const upload = multer({ storage: storage, limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB limit
 
 // Статика для загруженных изображений
-app.use('/uploads', serveStatic(path.join(__dirname, '../../../uploads')));
+app.use('/uploads', serveStatic(path.join(__dirname, '../uploads')));
 
 // Подключение к общей базе сайта
 let db;
 const initializeDb = async () => {
   db = await open({
-    filename: path.join(__dirname, '../../../yabudu.db'),
+    filename: path.join(__dirname, '../yabudu.db'),
     driver: sqlite3.Database,
   });
   console.log('Frontpad подключен к базе yabudu.db');
@@ -118,7 +118,7 @@ app.post('/api/upload/image', upload.single('image'), async (req, res) => {
     const imageType = req.file.mimetype.split('/')[1];
     
     // Создаем директорию для изображений если не существует
-    const uploadDir = path.join(__dirname, '../../../uploads/products');
+    const uploadDir = path.join(__dirname, '../uploads/products');
     if (!existsSync(uploadDir)) {
       await mkdir(uploadDir, { recursive: true });
     }
@@ -132,8 +132,8 @@ app.post('/api/upload/image', upload.single('image'), async (req, res) => {
     // Сохраняем файл
     await writeFile(filepath, buffer);
     
-    // Возвращаем URL изображения
-    const imageUrl = `https://fp.xn--90ag8bb0d.com/uploads/products/${filename}`;
+    // Возвращаем URL изображения (относительный путь)
+    const imageUrl = `/uploads/products/${filename}`;
     
     res.json({ url: imageUrl, filename: `/uploads/products/${filename}` });
   } catch (err) {
@@ -206,7 +206,7 @@ app.get('/api/products', async (req, res) => {
 
 // URL основного сайта для синхронизации
 const SITE_URL = 'https://xn--90ag8bb0d.com';
-const SYNC_TOKEN = 'site-sync-secret-2024';
+const SYNC_TOKEN = 'D&AM!ecjdH6g';
 
 // Функция синхронизации порядка с основным сайтом
 async function syncOrderToSite(endpoint, data) {
@@ -402,7 +402,7 @@ app.post('/api/orders', async (req, res) => {
        (guest_name, guest_phone, guest_email, order_type, payment, comment, items, total_amount, 
         status, created_at, address, street, building, apartment, entrance, floor, intercom, 
         is_asap, delivery_date, delivery_time, custom_time) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'новый', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         guest_name, guest_phone, guest_email || null, 
         order_type || 'delivery', payment || 'cash', comment || null, 
@@ -453,7 +453,7 @@ app.put('/api/orders/:id', async (req, res) => {
       [
         guest_name, guest_phone, guest_email || null,
         order_type || 'delivery', payment || 'cash', comment || null,
-        JSON.stringify(items), total_amount, status || 'pending',
+        JSON.stringify(items), total_amount, status || 'новый',
         fullAddress || null, street || null, building || null, apartment || null,
         entrance || null, floor || null, intercom || null,
         is_asap !== undefined ? (is_asap ? 1 : 0) : 1,
@@ -482,6 +482,29 @@ app.put('/api/orders/:id/status', async (req, res) => {
     const order = await db.get('SELECT * FROM orders WHERE id = ?', [id]);
     order.items = JSON.parse(order.items);
     
+    console.log(`[STATUS_CHANGE] Статус заказа #${id} изменён на "${status}"`);
+    
+    // Синхронизируем статус с основным сайтом
+    try {
+      const syncToken = 'D&AM!ecjdH6g';
+      const SITE_URL = 'https://xn--90ag8bb0d.com';
+      
+      await fetch(`${SITE_URL}/api/site/orders/status-sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Sync-Token': syncToken
+        },
+        body: JSON.stringify({
+          order_id: id,
+          status: status
+        })
+      });
+      console.log(`[STATUS_SYNC] Статус заказа #${id} синхронизирован с основным сайтом`);
+    } catch (syncErr) {
+      console.error(`[STATUS_SYNC] Ошибка синхронизации статуса:`, syncErr.message);
+    }
+    
     broadcast({ type: 'order_status_changed', order });
     
     res.json(order);
@@ -494,8 +517,35 @@ app.put('/api/orders/:id/status', async (req, res) => {
 app.delete('/api/orders/:id', async (req, res) => {
   const { id } = req.params;
   try {
+    // Получаем данные заказа перед удалением
+    const order = await db.get('SELECT * FROM orders WHERE id = ?', [id]);
+    
     await db.run('DELETE FROM orders WHERE id = ?', [id]);
     broadcast({ type: 'order_deleted', id });
+    
+    // Синхронизируем удаление с основным сайтом
+    try {
+      const syncToken = 'D&AM!ecjdH6g';
+      const SITE_URL = 'https://xn--90ag8bb0d.com';
+      
+      // Используем site_order_id если есть, чтобы основной сайт мог найти заказ
+      const orderIdForSync = order?.site_order_id || id;
+      
+      await fetch(`${SITE_URL}/api/site/orders/delete-sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Sync-Token': syncToken
+        },
+        body: JSON.stringify({
+          order_id: orderIdForSync
+        })
+      });
+      console.log(`[DELETE_SYNC] Удаление заказа #${id} синхронизировано с основным сайтом (ID: ${orderIdForSync})`);
+    } catch (syncErr) {
+      console.error(`[DELETE_SYNC] Ошибка синхронизации удаления:`, syncErr.message);
+    }
+    
     res.json({ message: 'Заказ удален' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -607,7 +657,7 @@ app.get('/api/reports/dashboard', async (req, res) => {
     const todayOrders = await db.get(`SELECT COUNT(*) as count, SUM(total_amount) as total FROM orders WHERE DATE(created_at) = ? AND status != 'cancelled'`, [today]);
     const yesterdayOrders = await db.get(`SELECT COUNT(*) as count, SUM(total_amount) as total FROM orders WHERE DATE(created_at) = ? AND status != 'cancelled'`, [yesterday]);
     const monthOrders = await db.get(`SELECT COUNT(*) as count, SUM(total_amount) as total FROM orders WHERE strftime('%Y-%m', created_at) = ? AND status != 'cancelled'`, [thisMonth]);
-    const pendingOrders = await db.get(`SELECT COUNT(*) as count FROM orders WHERE status IN ('pending', 'processing')`);
+    const pendingOrders = await db.get(`SELECT COUNT(*) as count FROM orders WHERE status IN ('новый', 'в производстве')`);
     const totalProducts = await db.get('SELECT COUNT(*) as count FROM products');
     const totalCustomers = await db.get('SELECT COUNT(*) as count FROM customers');
     
@@ -914,15 +964,18 @@ app.delete('/api/recipes/:id', async (req, res) => {
 app.get('/api/preorder-dates', async (req, res) => {
   try {
     const today = moment().format('YYYY-MM-DD');
+    // Используем SQLite совместимый синтаксис с GROUP BY даты
+    // Добавляем проверку delivery_date != '' и delivery_date != 'NULL' и TRIM() для фильтрации пустых строк
     const dates = await db.all(
-      `SELECT delivery_date, COUNT(*) as order_count FROM orders 
-       WHERE delivery_date IS NOT NULL AND delivery_date != '' AND delivery_date > ? 
+      `SELECT MIN(delivery_date) as delivery_date, COUNT(*) as order_count FROM orders 
+       WHERE is_asap = 0 AND delivery_date IS NOT NULL AND delivery_date != '' AND delivery_date != 'NULL' AND TRIM(delivery_date) != '' AND LENGTH(TRIM(delivery_date)) > 0 AND DATE(TRIM(delivery_date)) >= ? 
        AND status NOT IN ('delivered', 'cancelled') 
-       GROUP BY delivery_date ORDER BY delivery_date ASC`,
+       GROUP BY DATE(TRIM(delivery_date)) ORDER BY delivery_date ASC`,
       [today]
     );
     res.json(dates || []);
   } catch (err) {
+    console.error('[/api/preorder-dates] Error:', err.message);
     res.json([]);
   }
 });
@@ -989,16 +1042,29 @@ app.get('/api/products/:productId/sizes', async (req, res) => {
 });
 
 app.post('/api/products/:productId/sizes', async (req, res) => {
-  const { name, size_value, price } = req.body;
-  try {
-    const result = await db.run(
-      'INSERT INTO sizes (product_id, name, size_value, price) VALUES (?, ?, ?, ?)',
-      [req.params.productId, name, size_value || name, price || 0]
-    );
-    res.json({ id: result.lastID, product_id: req.params.productId, name, size_value, price });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+    const { name, size_value, price } = req.body;
+    try {
+        // 🔍 ПРОВЕРКА:是否存在相同尺寸
+        const existing = await get(
+            'SELECT * FROM sizes WHERE product_id = ? AND name = ? AND size_value = ?',
+            [req.params.productId, name, size_value || name]
+        );
+        
+        if (existing) {
+            return res.status(400).json({ 
+                error: 'Такой размер уже существует',
+                existing: { id: existing.id, name: existing.name, size_value: existing.size_value }
+            });
+        }
+        
+        const result = await run(
+            'INSERT INTO sizes (product_id, name, size_value, price) VALUES (?, ?, ?, ?)',
+            [req.params.productId, name, size_value || name, price || 0]
+        );
+        res.json({ id: result.lastID, product_id: req.params.productId, name, size_value, price });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.delete('/api/products/:productId/sizes', async (req, res) => {
@@ -1363,7 +1429,7 @@ app.post('/api/chats/:id/messages', chatUpload.none(), async (req, res) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Sync-Token': 'site-sync-secret-2024'
+          'X-Sync-Token': 'D&AM!ecjdH6g'
         },
         body: JSON.stringify({
           chat_id: id,
@@ -1413,7 +1479,7 @@ app.post('/api/site/orders/sync', async (req, res) => {
   try {
     // Проверяем токен синхронизации
     const syncToken = req.headers['x-sync-token'];
-    const expectedToken = 'site-sync-secret-2024';
+    const expectedToken = 'D&AM!ecjdH6g';
     
     if (syncToken !== expectedToken) {
       return res.status(403).json({ error: 'Неверный токен синхронизации' });
@@ -1438,7 +1504,7 @@ app.post('/api/site/orders/sync', async (req, res) => {
         order_type || 'delivery', address || null, entrance || null, floor || null, intercom || null,
         building || null, street || null, apartment || null,
         is_asap ? 1 : 0, delivery_date || null, delivery_time || null, custom_time || null,
-        payment || 'cash', comment || null, JSON.stringify(items || []), total_amount, status || 'pending',
+        payment || 'cash', comment || null, JSON.stringify(items || []), total_amount, status || 'новый',
         order_id
       ]);
       
@@ -1466,7 +1532,7 @@ app.post('/api/site/orders/sync', async (req, res) => {
         order_type || 'delivery', address || null, entrance || null, floor || null, intercom || null,
         building || null, street || null, apartment || null,
         is_asap ? 1 : 0, delivery_date || null, delivery_time || null, custom_time || null,
-        payment || 'cash', comment || null, JSON.stringify(items || []), total_amount, status || 'pending',
+        payment || 'cash', comment || null, JSON.stringify(items || []), total_amount, status || 'новый',
       ]);
       
       const order = await db.get('SELECT * FROM orders WHERE id = ?', [result.lastID]);
@@ -1496,7 +1562,7 @@ app.post('/api/site/messages/sync', async (req, res) => {
   
   try {
     const syncToken = req.headers['x-sync-token'];
-    const expectedToken = 'site-sync-secret-2024';
+    const expectedToken = 'D&AM!ecjdH6g';
     
     if (syncToken !== expectedToken) {
       return res.status(403).json({ error: 'Неверный токен синхронизации' });
@@ -1559,7 +1625,7 @@ app.post('/api/site/chats/update', async (req, res) => {
   
   try {
     const syncToken = req.headers['x-sync-token'];
-    const expectedToken = 'site-sync-secret-2024';
+    const expectedToken = 'D&AM!ecjdH6g';
     
     if (syncToken !== expectedToken) {
       return res.status(403).json({ error: 'Неверный токен синхронизации' });

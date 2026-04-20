@@ -164,12 +164,12 @@ const Messenger = () => {
     
     setSending(true);
     try {
-      const formData = new FormData();
-      formData.append('message', newMessage);
-      formData.append('sender', 'admin');
-      formData.append('sender_name', 'Admin');
-
-      await axios.post(`${FRONTPAD_API}/api/chats/${selectedChat.id}/messages`, formData);
+      // Отправляем как JSON вместо FormData
+      await axios.post(`${FRONTPAD_API}/api/chats/${selectedChat.id}/messages`, {
+        message: newMessage,
+        sender: 'admin',
+        sender_name: 'Admin'
+      });
       setNewMessage('');
       fetchMessages(selectedChat.id);
       fetchChats(); // Обновить список чатов
@@ -297,6 +297,11 @@ const Messenger = () => {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: '500', fontSize: '14px', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                       {chat.customer_name || chat.name || 'Клиент'}
+                      {chat.customer_phone && (
+                        <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: '400' }}>
+                          {chat.customer_phone}
+                        </span>
+                      )}
                       {chat.unread_count > 0 && (
                         <span style={{ 
                           background: '#3b82f6', 
@@ -358,6 +363,11 @@ const Messenger = () => {
                 <div style={{ fontWeight: '600', fontSize: '16px' }}>
                   {selectedChat.customer_name || selectedChat.name || 'Клиент'}
                 </div>
+                {selectedChat.customer_phone && (
+                  <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                    📞 {selectedChat.customer_phone}
+                  </div>
+                )}
                 {selectedChat.email && (
                   <div style={{ fontSize: '12px', color: '#6b7280' }}>
                     {selectedChat.email}

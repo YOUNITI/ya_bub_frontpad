@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
+import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL } from '../config';
 
 const Order = () => {
   const { items, getTotal, clearCart } = useCart();
+  const { user } = useAuth();
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
@@ -27,6 +29,9 @@ const Order = () => {
   const [showSuccess, setShowSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [deliveryZones, setDeliveryZones] = useState([]);
+  const [selectedZone, setSelectedZone] = useState(null);
+  const [deliveryPrice, setDeliveryPrice] = useState(0);
 
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -45,7 +50,51 @@ const Order = () => {
     if (name === 'deliveryTime') {
       setShowCustomTime(value === 'later');
     }
+    if (name === 'zone') {
+      const zone = deliveryZones.find(z => z.id === parseInt(value));
+      setSelectedZone(zone);
+      const cartTotal = getTotal();
+      if (zone) {
+        if (zone.min_order_amount && cartTotal >= zone.min_order_amount) {
+          setDeliveryPrice(0);
+        } else {
+          setDeliveryPrice(zone.delivery_price || zone.price || 0);
+        }
+      } else {
+        setDeliveryPrice(0);
+      }
+    }
   };
+
+  useEffect(() => {
+    const fetchDeliveryZones = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/delivery-zones`);
+        if (response.ok) {
+          const zones = await response.json();
+          setDeliveryZones(zones);
+          console.log('Районы доставки загружены:', zones.length);
+        } else {
+          console.error('Ошибка загрузки районов доставки:', response.status);
+        }
+      } catch (err) {
+        console.error('Ошибка загрузки районов доставки:', err.message);
+        setError('Не удалось загрузить районы доставки. Пожалуйста, обновите страницу.');
+      }
+    };
+    fetchDeliveryZones();
+  }, []);
+
+  useEffect(() => {
+    if (selectedZone) {
+      const cartTotal = getTotal();
+      if (selectedZone.min_order_amount && cartTotal >= selectedZone.min_order_amount) {
+        setDeliveryPrice(0);
+      } else {
+        setDeliveryPrice(selectedZone.delivery_price || selectedZone.price || 0);
+      }
+    }
+  }, [getTotal(), selectedZone]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -56,9 +105,15 @@ const Order = () => {
       return;
     }
 
-    if (formData.orderType === 'delivery' && (!formData.street || !formData.building)) {
-      setError('Пожалуйста, укажите улицу и номер дома');
-      return;
+    if (formData.orderType === 'delivery') {
+      if (!selectedZone) {
+        setError('Пожалуйста, выберите район доставки');
+        return;
+      }
+      if (!formData.street || !formData.building) {
+        setError('Пожалуйста, укажите улицу и номер дома');
+        return;
+      }
     }
 
     const phoneRegex = /^(\d{10,15})$/;
@@ -75,12 +130,10 @@ const Order = () => {
     setLoading(true);
 
     try {
-      // Формируем адрес
       const fullAddress = formData.street || formData.building 
         ? `${formData.street || ''} ${formData.building || ''} ${formData.apartment ? 'кв.' + formData.apartment : ''}`.trim()
         : '';
       
-      // Определяем дату доставки
       let deliveryDateValue = null;
       let deliveryTimeValue = 'Как можно скорее';
       let isAsapValue = 1;
@@ -99,7 +152,11 @@ const Order = () => {
         }
       }
 
+      const cartTotal = getTotal();
+      const finalTotal = cartTotal + deliveryPrice;
+
       const orderData = {
+        customer_id: user?.customer_id || null,
         guest_name: formData.name,
         guest_phone: formData.phone,
         guest_email: null,
@@ -116,8 +173,14 @@ const Order = () => {
         payment: formData.payment,
         comment: formData.comment,
         items: items,
-        total_amount: getTotal()
+        total_amount: finalTotal,
+        zone_id: selectedZone ? selectedZone.id : null,
+        delivery_price: deliveryPrice,
+        zone_name: selectedZone ? selectedZone.name : null
       };
+
+      console.log('[Order] Создание заказа, user:', user);
+      console.log('[Order] customer_id:', user?.customer_id);
 
       const orderResponse = await fetch(`${API_BASE_URL}/api/orders`, {
         method: 'POST',
@@ -129,6 +192,10 @@ const Order = () => {
         throw new Error('Ошибка создания заказа');
       }
 
+      const order = await orderResponse.json();
+      
+      localStorage.setItem('guestOrder', JSON.stringify(order));
+      
       setShowSuccess(true);
       clearCart();
 
@@ -248,6 +315,81 @@ const Order = () => {
 
                 {formData.orderType === 'delivery' ? (
                   <div>
+                    <h3 className="text-xl sm:text-2xl font-bold mb-2 sm:mb-4 font-heading">Район доставки</h3>
+                    {deliveryZones.length > 0 && (
+                      <p className="text-sm text-gray-600 mb-4">
+                        <i className="fas fa-map-marker-alt text-brand-yellow mr-2"></i>
+                        Доступно районов: <strong>{deliveryZones.length}</strong>
+                      </p>
+                    )}
+                    {deliveryZones.length > 0 ? (
+                      <div className="mb-6">
+                        <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl mb-4">
+                          <p className="text-blue-800 text-sm">
+                            <i className="fas fa-info-circle mr-2"></i>
+                            Выберите район доставки. Стоимость зависит от суммы заказа и выбранного района.
+                          </p>
+                        </div>
+                        <select
+                          name="zone"
+                          value={selectedZone?.id || ''}
+                          onChange={handleInputChange}
+                          className="w-full p-3 sm:p-4 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-yellow focus:border-transparent text-base min-h-[48px]"
+                        >
+                          <option value="">Выберите район доставки</option>
+                          {deliveryZones.map(zone => {
+                            const minOrder = zone.min_order_amount || 0;
+                            const deliveryCost = zone.delivery_price || zone.price || 0;
+                            let displayText = zone.name;
+                            if (minOrder > 0) {
+                              displayText += ` — при заказе от ${minOrder}₽ доставка бесплатно`;
+                            } else if (deliveryCost > 0) {
+                              displayText += ` — доставка ${deliveryCost}₽`;
+                            } else {
+                              displayText += ' — бесплатная доставка';
+                            }
+                            return (
+                              <option key={zone.id} value={zone.id}>
+                                {displayText}
+                              </option>
+                            );
+                          })}
+                        </select>
+                        {selectedZone && (
+                          <div className="mt-4 space-y-3">
+                            <div className={`p-4 rounded-xl border-2 ${deliveryPrice > 0 ? 'bg-yellow-50 border-yellow-300' : 'bg-green-50 border-green-300'}`}>
+                              <div className="flex items-start">
+                                <i className={`fas ${deliveryPrice > 0 ? 'fa-truck text-yellow-600' : 'fa-check-circle text-green-600'} text-xl mr-3 mt-1`}></i>
+                                <div>
+                                  <p className="font-bold text-base sm:text-lg">
+                                    {deliveryPrice > 0 ? `Стоимость доставки: ${deliveryPrice}₽` : 'Бесплатная доставка'}
+                                  </p>
+                                  <p className="text-sm text-gray-600 mt-1">
+                                    Район: <strong>{selectedZone.name}</strong>
+                                  </p>
+                                  {selectedZone.min_order_amount > 0 && (
+                                    <p className="text-xs text-gray-500 mt-2">
+                                      {deliveryPrice > 0 
+                                        ? `Закажите еще на ${selectedZone.min_order_amount - getTotal()}₽ для бесплатной доставки`
+                                        : `При заказе от ${selectedZone.min_order_amount}₽ доставка бесплатная`
+                                      }
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="mb-6">
+                        <div className="flex items-center justify-center p-6 bg-gray-100 rounded-xl">
+                          <i className="fas fa-spinner fa-spin text-gray-500 text-2xl mr-3"></i>
+                          <p className="text-gray-500">Загрузка районов доставки...</p>
+                        </div>
+                      </div>
+                    )}
+
                     <h3 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 font-heading">Адрес доставки</h3>
                     <div className="space-y-4 sm:space-y-6">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
@@ -472,7 +614,7 @@ const Order = () => {
                         onChange={handleInputChange}
                         className="mr-3 w-5 h-5"
                       />
-                      <span className="text-gray-700 font-medium text-sm sm:text-base">Картой при получении</span>
+                      <span className="text-gray-700 font-medium text-sm sm:text-base">Картой при получении(только самовывоз)</span>
                     </label>
                     <label className="flex items-center">
                       <input
@@ -517,6 +659,7 @@ const Order = () => {
                 <div className="mt-6 sm:mt-8">
                   <h3 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 font-heading">Ваш заказ</h3>
                   <div className="bg-gray-50 p-4 sm:p-6 rounded-xl sm:rounded-2xl mb-4 sm:mb-6">
+                    <h4 className="font-bold text-base sm:text-lg mb-4">Товары в корзине</h4>
                     {items.length === 0 ? (
                       <p className="text-center text-gray-500 py-8">Ваша корзина пуста</p>
                     ) : (
@@ -544,15 +687,35 @@ const Order = () => {
                       ))
                     )}
                   </div>
-                  <div className="flex justify-between items-center mb-4 sm:mb-6">
-                    <span className="text-base sm:text-lg font-bold">Итого:</span>
-                    <span className="text-xl sm:text-2xl font-bold text-brand-yellow">{getTotal().toFixed(2)} ₽</span>
+                  
+                  <div className="bg-white p-4 sm:p-6 rounded-xl sm:rounded-2xl border-2 border-gray-200">
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-600">Сумма заказа:</span>
+                        <span className="font-bold text-base sm:text-lg">{getTotal().toFixed(2)} ₽</span>
+                      </div>
+                      {formData.orderType === 'delivery' && selectedZone && (
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-600">Доставка ({selectedZone.name}):</span>
+                          <span className={`font-bold text-base sm:text-lg ${deliveryPrice === 0 ? 'text-green-600' : ''}`}>
+                            {deliveryPrice === 0 ? 'Бесплатно' : `${deliveryPrice} ₽`}
+                          </span>
+                        </div>
+                      )}
+                      <div className="border-t-2 border-gray-200 pt-3 mt-3">
+                        <div className="flex justify-between items-center">
+                          <span className="text-base sm:text-lg font-bold">Итого к оплате:</span>
+                          <span className="text-2xl sm:text-3xl font-bold text-brand-yellow">{(getTotal() + deliveryPrice).toFixed(2)} ₽</span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
                 <div className="text-center pt-4 sm:pt-6">
                   {error && (
-                    <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 text-sm sm:text-base">
+                    <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-xl mb-4 text-sm sm:text-base animate-pulse">
+                      <i className="fas fa-exclamation-circle mr-2"></i>
                       {error}
                     </div>
                   )}
@@ -567,6 +730,12 @@ const Order = () => {
                       <><i className="fas fa-paper-plane mr-2"></i> Оформить заказ</>
                     )}
                   </button>
+                  {deliveryPrice > 0 && (
+                    <p className="text-xs text-gray-500 mt-4">
+                      <i className="fas fa-info-circle mr-1"></i>
+                      Стоимость доставки включена в итоговую сумму
+                    </p>
+                  )}
                 </div>
               </form>
             </div>

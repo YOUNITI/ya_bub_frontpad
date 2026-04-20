@@ -60,12 +60,14 @@ const Profile = () => {
   // Получение текста статуса
   const getStatusText = (status) => {
     const statuses = {
-      'pending': 'Ожидает обработки',
-      'processing': 'Готовится',
-      'ready': 'Готов к выдаче',
-      'delivering': 'Доставляется',
-      'completed': 'Доставлен',
-      'cancelled': 'Отменён'
+      'pending': 'Новый',
+      'processing': 'В производстве',
+      'ready': 'Произведен',
+      'delivering': 'В пути',
+      'completed': 'Выполнен',
+      'cancelled': 'Отменён',
+      'rejected': 'Отклонён',
+      'отменён': 'Отклонён'
     };
     return statuses[status] || status;
   };
@@ -89,14 +91,19 @@ const Profile = () => {
       'ready': 'bg-green-100 text-green-800',
       'delivering': 'bg-purple-100 text-purple-800',
       'completed': 'bg-gray-100 text-gray-800',
-      'cancelled': 'bg-red-100 text-red-800'
+      'cancelled': 'bg-red-100 text-red-800',
+      'rejected': 'bg-red-100 text-red-800',
+      'отменён': 'bg-red-100 text-red-800'
     };
     return colors[status] || 'bg-gray-100 text-gray-800';
   };
 
   // Проверка активного заказа (pending, processing или delivering)
+  // Включаем все статусы - и русские, и английские
   const isActiveOrder = (status) => {
-    return status === 'pending' || status === 'processing' || status === 'delivering';
+    return status === 'pending' || status === 'новый' || 
+           status === 'processing' || status === 'в производстве' ||
+           status === 'delivering' || status === 'в пути';
   };
 
   // Загрузка профиля пользователя
@@ -137,11 +144,97 @@ const Profile = () => {
     loadOrders();
   }, [user]);
 
+  // WebSocket для обновления статуса заказов
+  useEffect(() => {
+    // Подключаемся к WebSocket
+    const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+    let ws;
+    let reconnectTimeout;
+    
+    const connectWebSocket = () => {
+      ws = new WebSocket(wsUrl);
+      
+      ws.onopen = () => {
+        console.log('[Profile] WebSocket подключён');
+        // Авторизуемся
+        if (user?.customer_id) {
+          ws.send(JSON.stringify({ type: 'auth', userId: user.customer_id }));
+        }
+      };
+      
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log('[Profile] WebSocket сообщение:', data);
+          
+          if (data.type === 'order_status_changed') {
+            // Обновляем заказы при изменении статуса
+            console.log('[Profile] Получено обновление статуса заказа:', data.order);
+            
+            // Перезагружаем заказы
+            loadOrders();
+            
+            // Также показываем уведомление пользователю
+            if (data.order) {
+              const statusTexts = {
+                'pending': 'Новый',
+                'новый': 'Новый',
+                'processing': 'В производстве',
+                'в производстве': 'В производстве',
+                'ready': 'Произведен',
+                'произведен': 'Произведен',
+                'delivering': 'В пути',
+                'в пути': 'В пути',
+                'completed': 'Выполнен',
+                'выполнен': 'Выполнен',
+                'cancelled': 'Отменён',
+                'rejected': 'Отклонён',
+                'отменён': 'Отменён'
+              };
+              const statusText = statusTexts[data.order.status] || data.order.status;
+              console.log(`[Profile] Статус заказа изменён на: ${statusText}`);
+            }
+          }
+          
+          // Если заказ удалён во Frontpad - удаляем из списка
+          if (data.type === 'order_deleted') {
+            console.log('[Profile] Заказ удалён:', data.id);
+            loadOrders();
+          }
+        } catch (err) {
+          console.error('[Profile] Ошибка парсинга WebSocket сообщения:', err);
+        }
+      };
+      
+      ws.onclose = () => {
+        console.log('[Profile] WebSocket отключён, переподключаемся...');
+        reconnectTimeout = setTimeout(connectWebSocket, 3000);
+      };
+      
+      ws.onerror = (err) => {
+        console.error('[Profile] WebSocket ошибка:', err);
+      };
+    };
+    
+    if (user?.customer_id) {
+      connectWebSocket();
+    }
+    
+    return () => {
+      if (ws) {
+        ws.close();
+      }
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+      }
+    };
+  }, [user]);
+
   const loadOrders = async () => {
     setLoadingOrders(true);
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/orders/my`, {
+      const response = await fetch(`${API_BASE_URL}/api/orders/my`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -392,88 +485,6 @@ const Profile = () => {
                   </button>
                 </div>
               )}
-
-              {/* Блок активных заказов */}
-              <div>
-                <h2 className="text-xl font-semibold text-gray-800 mb-4">Ваши активные заказы</h2>
-                
-                {loadingOrders ? (
-                  <div className="text-center py-8">
-                    <i className="fas fa-spinner fa-spin text-2xl text-gray-400"></i>
-                    <p className="text-gray-500 mt-2">Загрузка заказов...</p>
-                  </div>
-                ) : activeOrders.length === 0 ? (
-                  <div className="text-center py-8">
-                    <p className="text-gray-500">Активных заказов нету</p>
-                    <a
-                      href="#/menu"
-                      className="inline-block mt-4 bg-brand-yellow text-brand-black px-6 py-2 rounded-full font-bold hover:bg-yellow-500 transition-colors"
-                    >
-                      Сделать заказ
-                    </a>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {activeOrders.map((order) => (
-                      <div 
-                        key={order.id} 
-                        className="bg-orange-50 border border-orange-200 rounded-lg p-4"
-                      >
-                        <div className="flex justify-between items-start mb-3">
-                          <div>
-                            <p className="font-semibold text-gray-800">
-                              Заказ №{order.id}
-                              <span className="ml-2 text-orange-600 text-sm">
-                                <i className="fas fa-fire mr-1"></i>
-                                {getStatusText(order.status)}
-                              </span>
-                            </p>
-                            <p className="text-sm text-gray-500">{formatDateTime(order.created_at)}</p>
-                          </div>
-                        </div>
-                        
-                        <div className="border-t border-orange-200 pt-3">
-                          {/* Информация о заказе */}
-                          <div className="grid grid-cols-1 gap-2 mb-3 text-sm">
-                            {order.guest_phone && (
-                              <div className="flex items-center text-gray-600">
-                                <i className="fas fa-phone w-6 text-brand-yellow"></i>
-                                <span>📞 {order.guest_phone}</span>
-                              </div>
-                            )}
-                            {order.address && (
-                              <div className="flex items-center text-gray-600">
-                                <i className="fas fa-map-marker-alt w-6 text-brand-yellow"></i>
-                                <span>📍 {order.address}</span>
-                              </div>
-                            )}
-                            {order.payment && (
-                              <div className="flex items-center text-gray-600">
-                                <i className="fas fa-credit-card w-6 text-brand-yellow"></i>
-                                <span>💳 {getPaymentText(order.payment)}</span>
-                              </div>
-                            )}
-                          </div>
-                          
-                          <div className="space-y-1 mb-3">
-                            {order.items.map((item, index) => (
-                              <div key={index} className="flex justify-between text-sm">
-                                <span className="text-gray-600">{item.name} × {item.quantity}</span>
-                                <span className="text-gray-800">{formatPrice(parseFloat(item.price) * item.quantity)}</span>
-                              </div>
-                            ))}
-                          </div>
-                          
-                          <div className="flex justify-between items-center pt-2 border-t border-orange-200">
-                            <span className="font-semibold text-gray-800">Итого:</span>
-                            <span className="font-bold text-brand-black">{formatPrice(order.total_amount)}</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
             </div>
           )}
 
@@ -509,6 +520,12 @@ const Profile = () => {
                             Заказ №{order.id}
                           </p>
                           <p className="text-sm text-gray-500">{formatDateTime(order.created_at)}</p>
+                          {/* Время готовности заказа */}
+                          {order.ready_time && (
+                            <p className="text-sm text-green-600 font-medium mt-1">
+                              ⏱ Будет готов в: {order.ready_time}
+                            </p>
+                          )}
                         </div>
                         <span className={`px-3 py-1 rounded-full text-sm font-medium cursor-pointer ${getStatusColor(order.status)}`}>
                           {getStatusText(order.status)}

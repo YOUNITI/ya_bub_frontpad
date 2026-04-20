@@ -1,0 +1,132 @@
+server {
+    server_name ябуду.com www.ябуду.com xn--90ag8bb0d.com www.xn--90ag8bb0d.com;
+    listen 443 ssl;
+    ssl_certificate /etc/letsencrypt/live/xn--90ag8bb0d.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/xn--90ag8bb0d.com/privkey.pem;
+    
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    
+    root /var/www/ya_budu/ya_budu/dist;
+    index index.html;
+    autoindex off;
+    
+    # Не кэшировать service worker и html
+    location ~* (service-worker|\.html)$ {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+    }
+    
+    # Статические файлы с долгим кэшем
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+    
+    # Раздача статических файлов React/Vite напрямую
+    location /static/ {
+        alias /var/www/ya_budu/ya_budu/dist/static/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+    
+    location /assets/ {
+        alias /var/www/ya_budu/ya_budu/dist/assets/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+    
+    # Service Worker - не кэшировать
+    location /service-worker.js {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        try_files /service-worker.js @node;
+    }
+    
+    location /manifest.json {
+        try_files /manifest.json @node;
+    }
+    
+    location /offline.html {
+        try_files /offline.html @node;
+    }
+    
+    location /index.html {
+        try_files /index.html @node;
+    }
+    
+    # WebSocket и API - проксируем на YounitiPad (порт 3005)
+    location /ws {
+        proxy_pass http://localhost:3005;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+    
+    location /socket.io/ {
+        proxy_pass http://localhost:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+    
+    location /api {
+        proxy_pass http://localhost:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    # Uploads - раздаём с папки Frontpad server
+    location /uploads/ {
+        alias /var/www/ya_budu/ya_budu/frontpad/server/uploads/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+    
+    # Также обрабатываем без trailing slash
+    location /uploads {
+        alias /var/www/ya_budu/ya_budu/frontpad/server/uploads/;
+    }
+    
+    location /icons/ {
+        alias /var/www/ya_budu/ya_budu/icons/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+    
+    location /icons {
+        alias /var/www/ya_budu/ya_budu/icons/;
+    }
+    
+    # Заказы - проксируем на Node.js
+    location /orders {
+        proxy_pass http://localhost:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    # SPA fallback
+    location @node {
+        proxy_pass http://localhost:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    # Основной fallback для SPA
+    location / {
+        try_files $uri $uri/ @node;
+    }
+}

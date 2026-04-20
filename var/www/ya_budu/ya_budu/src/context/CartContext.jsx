@@ -80,21 +80,12 @@ export const CartProvider = ({ children }) => {
       } else {
         // Поддержка как числа, так и строки с валютой
         const priceStr = typeof price === 'number' ? String(price) : price;
-        const basePrice = parseFloat(priceStr.replace(/[₽P\s]/g, '').replace(',', '.')) || 0;
-        const sizeModifier = parseFloat(size?.price_modifier) || 0;
-        const addonsPrice = sortedAddons.reduce((sum, addon) => sum + (parseFloat(addon.price) || 0), 0);
-        const sizeAddonsPrice = sortedSizeAddons.reduce((sum, addon) => {
-          const addonPrice = parseFloat(addon.price) || 0;
-          const modifier = parseFloat(addon.price_modifier) || 0;
-          return sum + addonPrice + modifier;
-        }, 0);
-        const finalPrice = basePrice + sizeModifier + addonsPrice + sizeAddonsPrice;
+        const finalPrice = parseFloat(priceStr.replace(/[₽P\s]/g, '').replace(',', '.')) || 0;
         
         return [...prevItems, {
           id: Date.now() + Math.random(), // уникальный ID
           name: productName,
           price: finalPrice,
-          basePrice: basePrice,
           imageUrl: imageUrl || 'https://via.placeholder.com/100',
           quantity: 1,
           productId: productId,

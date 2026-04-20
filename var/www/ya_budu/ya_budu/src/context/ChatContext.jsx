@@ -64,7 +64,14 @@ export const ChatProvider = ({ children }) => {
           const data = JSON.parse(event.data);
           
           if (data.type === 'new_message') {
-            if (user?.customer_id && data.message.sender_id === user.customer_id) {
+            // Проверяем, что сообщение предназначено этому клиенту
+            // Может прийти either sender_id или customer_id
+            const isOurMessage = user?.customer_id && (
+              data.message.sender_id === user.customer_id ||
+              data.customer_id === user.customer_id
+            );
+            
+            if (isOurMessage) {
               fetchMessages();
               if (!isChatOpen) {
                 setUnreadCount(prev => prev + 1);

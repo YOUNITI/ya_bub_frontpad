@@ -12,13 +12,26 @@ export default defineConfig(({ mode }) => {
   const wsTarget = env.VITE_WS_URL || 'ws://localhost:3005'
   
   return {
-    plugins: [react(), tailwindcss()],
-    css: {
-      postcss: false
-    },
+    plugins: [
+      react(),
+      tailwindcss()
+    ],
     esbuild: {
       loader: 'jsx',
       include: /src\/.*\.[jt]sx?$/,
+      // Отключаем минификацию для совместимости
+      minify: false
+    },
+    build: {
+      // Отключаем минификацию для надёжности
+      minify: false,
+      // Настройки для лучшей совместимости
+      rollupOptions: {
+        output: {
+          // Улучшенные имена для отладки
+          manualChunks: undefined
+        }
+      }
     },
     server: {
       port: 5173,

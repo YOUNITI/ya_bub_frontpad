@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lock, Eye, EyeOff } from 'lucide-react';
+import { Lock, Eye, EyeOff, Bike } from 'lucide-react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 
@@ -12,6 +12,7 @@ function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loginType, setLoginType] = useState('admin'); // 'admin' или 'courier'
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -19,16 +20,40 @@ function Login() {
     setLoading(true);
 
     try {
-      const response = await axios.post(`${FRONTPAD_API}/api/auth/login`, {
-        username,
-        password
-      });
+      let response;
+      
+      if (loginType === 'courier') {
+        // Вход для курьера - используем логин
+        response = await axios.post(`${FRONTPAD_API}/api/couriers/login`, {
+          login: username,
+          password
+        });
+        
+        if (response.data.success) {
+          // Сохраняем токен и данные курьера
+          localStorage.setItem('token', response.data.token);
+          localStorage.setItem('user', JSON.stringify({
+            ...response.data.courier,
+            role: 'courier'
+          }));
+          login({
+            ...response.data.courier,
+            role: 'courier'
+          });
+        }
+      } else {
+        // Обычный вход для админа
+        response = await axios.post(`${FRONTPAD_API}/api/auth/login`, {
+          username,
+          password
+        });
 
-      if (response.data.success) {
-        // Сохраняем токен и пользователя
-        localStorage.setItem('token', response.data.token);
-        localStorage.setItem('user', JSON.stringify(response.data.user));
-        login(response.data.user);
+        if (response.data.success) {
+          // Сохраняем токен и пользователя
+          localStorage.setItem('token', response.data.token);
+          localStorage.setItem('user', JSON.stringify(response.data.user));
+          login(response.data.user);
+        }
       }
     } catch (err) {
       console.error('Ошибка входа:', err);
@@ -69,7 +94,11 @@ function Login() {
             justifyContent: 'center',
             margin: '0 auto 16px'
           }}>
-            <Lock size={28} color="white" />
+            {loginType === 'courier' ? (
+              <Bike size={28} color="white" />
+            ) : (
+              <Lock size={28} color="white" />
+            )}
           </div>
           <h1 style={{
             fontSize: '24px',
@@ -77,15 +106,63 @@ function Login() {
             color: '#1f2937',
             margin: 0
           }}>
-            YounitiPad
+            {loginType === 'courier' ? 'Курьер' : 'YounitiPad'}
           </h1>
           <p style={{
             color: '#6b7280',
             marginTop: '8px',
             fontSize: '14px'
           }}>
-            Вход в панель управления
+            {loginType === 'courier' 
+              ? 'Вход для курьеров' 
+              : 'Вход в панель управления'}
           </p>
+        </div>
+
+        {/* Переключатель типа входа */}
+        <div style={{
+          display: 'flex',
+          marginBottom: '24px',
+          background: '#f3f4f6',
+          borderRadius: '8px',
+          padding: '4px'
+        }}>
+          <button
+            type="button"
+            onClick={() => { setLoginType('admin'); setUsername(''); setPassword(''); setError(''); }}
+            style={{
+              flex: 1,
+              padding: '10px',
+              border: 'none',
+              borderRadius: '6px',
+              background: loginType === 'admin' ? 'white' : 'transparent',
+              color: loginType === 'admin' ? '#667eea' : '#6b7280',
+              fontWeight: loginType === 'admin' ? '600' : '400',
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+              boxShadow: loginType === 'admin' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
+            }}
+          >
+            Админ
+          </button>
+          <button
+            type="button"
+            onClick={() => { setLoginType('courier'); setUsername(''); setPassword(''); setError(''); }}
+            style={{
+              flex: 1,
+              padding: '10px',
+              border: 'none',
+              borderRadius: '6px',
+              background: loginType === 'courier' ? 'white' : 'transparent',
+              color: loginType === 'courier' ? '#667eea' : '#6b7280',
+              fontWeight: loginType === 'courier' ? '600' : '400',
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+              boxShadow: loginType === 'courier' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
+            }}
+          >
+            Курьер
+          </button>
         </div>
 
         <form onSubmit={handleSubmit}>
@@ -111,7 +188,7 @@ function Login() {
               color: '#374151',
               marginBottom: '8px'
             }}>
-              Логин
+              {loginType === 'courier' ? 'Логин' : 'Логин'}
             </label>
             <input
               type="text"
@@ -130,7 +207,7 @@ function Login() {
               }}
               onFocus={(e) => e.target.style.borderColor = '#667eea'}
               onBlur={(e) => e.target.style.borderColor = '#d1d5db'}
-              placeholder="Введите логин"
+              placeholder={loginType === 'courier' ? 'Введите логин' : 'Введите логин'}
             />
           </div>
 
@@ -208,15 +285,6 @@ function Login() {
             {loading ? 'Вход...' : 'Войти'}
           </button>
         </form>
-
-        <div style={{
-          marginTop: '24px',
-          textAlign: 'center',
-          fontSize: '13px',
-          color: '#9ca3af'
-        }}>
-          По умолчанию: admin / admin
-        </div>
       </div>
     </div>
   );

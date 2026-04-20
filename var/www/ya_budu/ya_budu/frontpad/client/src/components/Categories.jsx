@@ -3,8 +3,8 @@ import axios from 'axios';
 import { Plus, Edit2, Trash2, X, GripVertical } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 
-// Hardcoded API URL for production
-const FRONTPAD_API = process.env.REACT_APP_FRONTPAD_API || 'http://localhost:3005';
+// Используем относительный путь для работы через nginx
+const FRONTPAD_API = process.env.REACT_APP_FONTPAD_API || '';
 
 const Categories = () => {
   const [categories, setCategories] = useState([]);

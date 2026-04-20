@@ -11,7 +11,7 @@ const __dirname = path.dirname(__filename);
 
 // Загружаем .env ПЕРЕД импортом db.js
 import dotenv from 'dotenv';
-dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
+dotenv.config({ path: path.resolve(__dirname, '../../../frontpad/server/.env'), override: true });
 
 import { v4 as uuidv4 } from 'uuid';
 import moment from 'moment';
@@ -24,7 +24,7 @@ import jwt from 'jsonwebtoken';
 
 // Импорт унифицированного модуля базы данных (после загрузки .env!)
 import { initDb, all, get, run, exec, close, getDbType } from './db.js';
-import { generateReceiptHTML, printReceiptSync, PRINTER_CONFIG } from './receipt.js';
+import { generateReceiptHTML, printReceiptSync, PRINTER_CONFIG, getReceiptSettings } from './receipt.js';
 
 // Импорт конфигурации
 import { 
@@ -51,7 +51,7 @@ const storage = multer.memoryStorage();
 const upload = multer({ storage: storage, limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB limit
 
 // Статика для загруженных изображений - используем абсолютный путь
-const uploadsPath = path.resolve(__dirname, '../../../uploads');
+const uploadsPath = path.resolve(__dirname, '../uploads');
 console.log('[Static] Путь к uploads:', uploadsPath);
 app.use('/uploads', serveStatic(uploadsPath));
 
@@ -87,6 +87,7 @@ const initializeDb = async () => {
       const tableInfo = await all("PRAGMA table_info(orders)");
       const hasDiscountAmount = tableInfo.find(col => col.name === 'discount_amount');
       const hasDiscountReason = tableInfo.find(col => col.name === 'discount_reason');
+      const hasReadyTime = tableInfo.find(col => col.name === 'ready_time');
       
       if (!hasDiscountAmount) {
         await run('ALTER TABLE orders ADD COLUMN discount_amount REAL DEFAULT 0');
@@ -95,6 +96,26 @@ const initializeDb = async () => {
       if (!hasDiscountReason) {
         await run('ALTER TABLE orders ADD COLUMN discount_reason TEXT');
         console.log('Колонка discount_reason добавлена в таблицу orders');
+      }
+      if (!hasReadyTime) {
+        await run('ALTER TABLE orders ADD COLUMN ready_time TEXT');
+        console.log('Колонка ready_time добавлена в таблицу orders');
+      }
+      
+      // Миграция: добавить таблицу couriers для SQLite
+      try {
+        const couriersTableExists = tableInfo.find(col => col.name === 'courier_id');
+        if (!couriersTableExists) {
+          await run('ALTER TABLE orders ADD COLUMN courier_id INTEGER DEFAULT NULL');
+          await run('ALTER TABLE orders ADD COLUMN courier_name TEXT');
+          await run('ALTER TABLE orders ADD COLUMN assigned_at TEXT');
+          await run('ALTER TABLE orders ADD COLUMN delivery_started_at TEXT');
+          await run('ALTER TABLE orders ADD COLUMN delivered_at TEXT');
+          await run('ALTER TABLE orders ADD COLUMN courier_comment TEXT');
+          console.log('Колонки для курьера добавлены в таблицу orders (SQLite)');
+        }
+      } catch (e) {
+        console.log('Миграция couriers не требуется (SQLite):', e.message);
       }
     } else if (dbType === 'mysql') {
       // Для MySQL используем информационную схему
@@ -145,6 +166,158 @@ const initializeDb = async () => {
           await run('ALTER TABLE products ADD COLUMN combo_items TEXT');
           console.log('Колонки is_combo и combo_items добавлены в таблицу products (MySQL)');
         } catch (err) {}
+      }
+      
+      // Миграция: добавить колонку ready_time в таблицу orders
+      try {
+        await get("SELECT ready_time FROM orders LIMIT 1");
+      } catch (e) {
+        try {
+          await run('ALTER TABLE orders ADD COLUMN ready_time VARCHAR(10)');
+          console.log('Колонка ready_time добавлена в таблицу orders (MySQL)');
+        } catch (err) {}
+      }
+      
+      // Миграция: добавить колонку customer_id в таблицу orders
+      try {
+        await get("SELECT customer_id FROM orders LIMIT 1");
+      } catch (e) {
+        try {
+          await run('ALTER TABLE orders ADD COLUMN customer_id INT');
+          console.log('Колонка customer_id добавлена в таблицу orders (MySQL)');
+        } catch (err) {}
+      }
+      
+      // Миграция: добавить колонку email в таблицу users
+      try {
+        await get("SELECT email FROM users LIMIT 1");
+      } catch (e) {
+        try {
+          await run('ALTER TABLE users ADD COLUMN email VARCHAR(255)');
+          console.log('Колонка email добавлена в таблицу users (MySQL)');
+        } catch (err) {}
+      }
+      
+      // Миграция: добавить таблицу couriers
+      try {
+        await get("SELECT id FROM couriers LIMIT 1");
+      } catch (e) {
+        try {
+          await run(`CREATE TABLE IF NOT EXISTS couriers (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            login VARCHAR(50) NOT NULL UNIQUE,
+            password_hash VARCHAR(255) NOT NULL,
+            is_active INT DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+          console.log('Таблица couriers создана (MySQL)');
+        } catch (err) {
+          console.log('Ошибка создания таблицы couriers:', err.message);
+        }
+      }
+      
+      // Миграция: добавить колонку login в таблицу couriers (если её нет)
+      try {
+        await get("SELECT login FROM couriers LIMIT 1");
+      } catch (e) {
+        try {
+          await run('ALTER TABLE couriers ADD COLUMN login VARCHAR(50) UNIQUE');
+          console.log('Колонка login добавлена в таблицу couriers (MySQL)');
+        } catch (err) {
+          console.log('Миграция login для couriers не требуется:', err.message);
+        }
+      }
+      
+      // Миграция: добавить поля для курьера в таблицу orders
+      try {
+        await get("SELECT courier_id FROM orders LIMIT 1");
+      } catch (e) {
+        try {
+          await run('ALTER TABLE orders ADD COLUMN courier_id INT DEFAULT NULL');
+          await run('ALTER TABLE orders ADD COLUMN courier_name VARCHAR(255) DEFAULT NULL');
+          await run('ALTER TABLE orders ADD COLUMN assigned_at DATETIME DEFAULT NULL');
+          await run('ALTER TABLE orders ADD COLUMN delivery_started_at DATETIME DEFAULT NULL');
+          await run('ALTER TABLE orders ADD COLUMN delivered_at DATETIME DEFAULT NULL');
+          await run('ALTER TABLE orders ADD COLUMN courier_comment TEXT DEFAULT NULL');
+          console.log('Колонки для курьера добавлены в таблицу orders (MySQL)');
+        } catch (err) {
+          console.log('Ошибка добавления колонок для курьера:', err.message);
+        }
+      }
+      
+      // Миграция: добавить роль в таблицу users
+      try {
+        await get("SELECT role FROM users LIMIT 1");
+      } catch (e) {
+        try {
+          await run('ALTER TABLE users ADD COLUMN role VARCHAR(50) DEFAULT "admin"');
+          console.log('Колонка role добавлена в таблицу users (MySQL)');
+        } catch (err) {}
+      }
+      
+      // Миграция: добавить point_id в таблицу users
+      try {
+        await get("SELECT point_id FROM users LIMIT 1");
+      } catch (e) {
+        try {
+          await run('ALTER TABLE users ADD COLUMN point_id INT DEFAULT 1');
+          console.log('Колонка point_id добавлена в таблицу users (MySQL)');
+        } catch (err) {}
+      }
+      
+      // Миграция: создать таблицу points
+      try {
+        await get("SELECT id FROM points LIMIT 1");
+      } catch (e) {
+        try {
+          await run(`CREATE TABLE IF NOT EXISTS points (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            address VARCHAR(500),
+            phone VARCHAR(50),
+            is_active INT DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+          console.log('Таблица points создана (MySQL)');
+          
+          // Создаем точки по умолчанию
+          await run('INSERT INTO points (id, name, address, is_active) VALUES (1, "Точка 1 (Основная)", "ул. Примерная, 1", 1) ON DUPLICATE KEY UPDATE name = VALUES(name)');
+          await run('INSERT INTO points (id, name, address, is_active) VALUES (2, "Точка 2", "ул. Примерная, 2", 1) ON DUPLICATE KEY UPDATE name = VALUES(name)');
+          console.log('Точки по умолчанию созданы');
+        } catch (err) {
+          console.log('Ошибка создания таблицы points:', err.message);
+        }
+      }
+      
+      // Миграция: добавить point_id в таблицу orders
+      try {
+        await get("SELECT point_id FROM orders LIMIT 1");
+      } catch (e) {
+        try {
+          await run('ALTER TABLE orders ADD COLUMN point_id INT DEFAULT 1');
+          console.log('Колонка point_id добавлена в таблицу orders (MySQL)');
+        } catch (err) {}
+      }
+      
+      // Миграция: добавить point_id в таблицу delivery_zones
+      try {
+        await get("SELECT point_id FROM delivery_zones LIMIT 1");
+      } catch (e) {
+        try {
+          await run('ALTER TABLE delivery_zones ADD COLUMN point_id INT DEFAULT 1');
+          console.log('Колонка point_id добавлена в таблицу delivery_zones (MySQL)');
+        } catch (err) {}
+      }
+      
+      // Миграция: сделать order_number nullable
+      try {
+        await run('ALTER TABLE orders MODIFY order_number VARCHAR(100) NULL');
+        console.log('Колонка order_number изменена на NULL (MySQL)');
+      } catch (err) {
+        console.log('Миграция order_number не требуется:', err.message);
       }
     }
   } catch (e) {
@@ -250,7 +423,8 @@ const initializeDb = async () => {
         total_amount REAL DEFAULT 0,
         discount_amount REAL DEFAULT 0,
         discount_reason TEXT,
-        status TEXT DEFAULT 'pending',
+        ready_time TEXT,
+        status TEXT DEFAULT 'новый',
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
       
@@ -303,6 +477,16 @@ const initializeDb = async () => {
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
       
+      CREATE TABLE IF NOT EXISTS delivery_zones (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        min_order_amount INTEGER DEFAULT 0,
+        delivery_price INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        sort_order INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+      
       CREATE TABLE IF NOT EXISTS sizes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         product_id INTEGER NOT NULL,
@@ -351,12 +535,32 @@ const initializeDb = async () => {
     `);
     
     // Создаем первого пользователя admin/admin если его нет
-    const existingUser = await get('SELECT * FROM users WHERE username = ?', ['admin']);
-    if (!existingUser) {
-      const hashedPassword = await bcrypt.hash('admin', 10);
-      await run('INSERT INTO users (username, password, role) VALUES (?, ?, ?)', 
-        ['admin', hashedPassword, 'admin']);
-      console.log('Создан пользователь admin/admin');
+    try {
+      const existingUser = await get('SELECT * FROM users WHERE username = ?', ['admin']);
+      if (!existingUser) {
+        const hashedPassword = await bcrypt.hash('admin', 10);
+        await run('INSERT INTO users (username, password, role, email) VALUES (?, ?, ?, ?)', 
+          ['admin', hashedPassword, 'admin', 'admin@yabudu.local']);
+        console.log('Создан пользователь admin/admin');
+      }
+    } catch (e) {
+      console.log('Пользователь уже существует или ошибка:', e.message);
+    }
+    
+    // Создаем тестовые районы доставки если таблица пуста
+    try {
+      const zonesCount = await get('SELECT COUNT(*) as count FROM delivery_zones');
+      if (!zonesCount || zonesCount.count === 0) {
+        await run(`INSERT INTO delivery_zones (name, min_order_amount, delivery_price, is_active, sort_order) VALUES 
+          ('Центральный район', 1000, 150, 1, 1),
+          ('Северный район', 1200, 200, 1, 2),
+          ('Южный район', 1000, 150, 1, 3),
+          ('Восточный район', 1500, 250, 1, 4),
+          ('Западный район', 1000, 150, 1, 5)`);
+        console.log('Созданы тестовые районы доставки');
+      }
+    } catch (e) {
+      console.log('Районы уже существуют или ошибка:', e.message);
     }
     
     console.log('Все таблицы готовы (SQLite)');
@@ -395,6 +599,7 @@ const initializeDb = async () => {
         username VARCHAR(255) UNIQUE NOT NULL,
         password VARCHAR(255) NOT NULL,
         role VARCHAR(50) DEFAULT 'admin',
+        email VARCHAR(255),
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       
@@ -433,6 +638,7 @@ const initializeDb = async () => {
         id INT AUTO_INCREMENT PRIMARY KEY,
         site_order_id INT,
         order_number VARCHAR(100),
+        customer_id INT,
         guest_name VARCHAR(255),
         guest_phone VARCHAR(50),
         guest_email VARCHAR(255),
@@ -454,7 +660,8 @@ const initializeDb = async () => {
         total_amount DECIMAL(10,2) DEFAULT 0,
         discount_amount DECIMAL(10,2) DEFAULT 0,
         discount_reason TEXT,
-        status VARCHAR(50) DEFAULT 'pending',
+        ready_time VARCHAR(10),
+        status VARCHAR(50) DEFAULT 'новый',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       
@@ -507,6 +714,16 @@ const initializeDb = async () => {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       
+      CREATE TABLE IF NOT EXISTS delivery_zones (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        min_order_amount INT DEFAULT 0,
+        delivery_price INT DEFAULT 0,
+        is_active INT DEFAULT 1,
+        sort_order INT DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      
       CREATE TABLE IF NOT EXISTS sizes (
         id INT AUTO_INCREMENT PRIMARY KEY,
         product_id INT NOT NULL,
@@ -555,12 +772,16 @@ const initializeDb = async () => {
     `);
     
     // Создаем первого пользователя admin/admin если его нет
-    const existingUser = await get('SELECT * FROM users WHERE username = ?', ['admin']);
-    if (!existingUser) {
-      const hashedPassword = await bcrypt.hash('admin', 10);
-      await run('INSERT INTO users (username, password, role) VALUES (?, ?, ?)', 
-        ['admin', hashedPassword, 'admin']);
-      console.log('Создан пользователь admin/admin');
+    try {
+      const existingUser = await get('SELECT * FROM users WHERE username = ?', ['admin']);
+      if (!existingUser) {
+        const hashedPassword = await bcrypt.hash('admin', 10);
+        await run('INSERT INTO users (username, password, role, email) VALUES (?, ?, ?, ?)', 
+          ['admin', hashedPassword, 'admin', 'admin@yabudu.local']);
+        console.log('Создан пользователь admin/admin');
+      }
+    } catch (e) {
+      console.log('Пользователь уже существует или ошибка:', e.message);
     }
     
     console.log('Все таблицы готовы (MySQL)');
@@ -572,8 +793,24 @@ initializeDb();
 // WebSocket соединения
 const clients = new Set();
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
   console.log('Frontpad клиент подключен');
+  
+  // Извлекаем токен из параметров запроса
+  const token = req.url?.split('token=')[1];
+  
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      ws.pointId = decoded.point_id;
+      ws.userId = decoded.id;
+      ws.role = decoded.role;
+      console.log(`Клиент авторизован: user_id=${ws.userId}, point_id=${ws.pointId}, role=${ws.role}`);
+    } catch (e) {
+      console.log('Клиент подключен без валидного токена');
+    }
+  }
+  
   clients.add(ws);
   
   ws.on('close', () => {
@@ -581,13 +818,35 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Рассылка уведомлений всем клиентам (с защитой от ошибок)
+// Рассылка уведомлений с фильтрацией по точкам
 const broadcast = (data) => {
   try {
     const message = JSON.stringify(data);
     clients.forEach(client => {
       try {
-        if (client.readyState === 1) {
+        if (client.readyState !== 1) return;
+        
+        // Для новых заказов - фильтруем по точке
+        if (data.type === 'new_order' && data.order) {
+          // Администратор получает все
+          if (client.role === 'admin' || client.pointId === 0 || client.pointId === null) {
+            client.send(message);
+            return;
+          }
+          
+          // Если заказ привязан к точке - отправляем только этой точке
+          if (data.order.point_id && client.pointId === data.order.point_id) {
+            client.send(message);
+            return;
+          }
+          
+          // Если заказ не привязан ни к какой точке - отправляем всем
+          if (!data.order.point_id) {
+            client.send(message);
+            return;
+          }
+        } else {
+          // Все остальные уведомления отправляем всем
           client.send(message);
         }
       } catch (e) {
@@ -630,7 +889,7 @@ app.post('/api/upload/image', upload.single('image'), async (req, res) => {
     const imageType = req.file.mimetype.split('/')[1];
     
     // Создаем директорию для изображений если не существует
-    const uploadDir = path.join(__dirname, '../../../uploads/products');
+    const uploadDir = path.join(__dirname, '../uploads/products');
     if (!existsSync(uploadDir)) {
       await mkdir(uploadDir, { recursive: true });
     }
@@ -658,9 +917,39 @@ app.post('/api/upload/image', upload.single('image'), async (req, res) => {
 
 // ============ AUTH ============
 
+// Получить всех пользователей (с point_id)
+app.get('/api/users', async (req, res) => {
+  try {
+    const users = await all('SELECT id, username, role, point_id, email, created_at FROM users ORDER BY username');
+    res.json(users || []);
+  } catch (err) {
+    console.error('Error fetching users:', err.message);
+    res.json([]);
+  }
+});
+
+// Обновить point_id пользователя
+app.put('/api/users/:id/point', async (req, res) => {
+  const { id } = req.params;
+  const { point_id } = req.body;
+  
+  if (point_id === undefined) {
+    return res.status(400).json({ error: 'point_id обязателен' });
+  }
+  
+  try {
+    await run('UPDATE users SET point_id = ? WHERE id = ?', [point_id, id]);
+    const user = await get('SELECT id, username, role, point_id FROM users WHERE id = ?', [id]);
+    res.json({ success: true, user });
+  } catch (err) {
+    console.error('Error updating user point_id:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Регистрация
 app.post('/api/auth/register', async (req, res) => {
-  const { username, password } = req.body;
+  const { username, password, point_id } = req.body;
   
   if (!username || !password) {
     return res.status(400).json({ error: 'Username и password обязательны' });
@@ -676,20 +965,22 @@ app.post('/api/auth/register', async (req, res) => {
     // Хешируем пароль
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    // Создаем пользователя
+    // Создаем пользователя с point_id (по умолчанию 1)
+    const userPointId = point_id || 1;
+    
     const result = await run(
-      'INSERT INTO users (username, password, role) VALUES (?, ?, ?)',
-      [username, hashedPassword, 'admin']
+      'INSERT INTO users (username, password, role, point_id) VALUES (?, ?, ?, ?)',
+      [username, hashedPassword, 'admin', userPointId]
     );
     
     // Генерируем токен
     const token = jwt.sign(
-      { id: result.lastID, username, role: 'admin' },
+      { id: result.lastID, username, role: 'admin', point_id: userPointId },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
     
-    res.json({ success: true, token, user: { id: result.lastID, username, role: 'admin' } });
+    res.json({ success: true, token, user: { id: result.lastID, username, role: 'admin', point_id: userPointId } });
   } catch (err) {
     console.error('Ошибка регистрации:', err);
     res.status(500).json({ error: err.message });
@@ -717,14 +1008,17 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Неверный логин или пароль' });
     }
     
-    // Генерируем токен
+    // Получаем point_id пользователя (по умолчанию 1)
+    const pointId = user.point_id || 1;
+    
+    // Генерируем токен с point_id
     const token = jwt.sign(
-      { id: user.id, username: user.username, role: user.role },
+      { id: user.id, username: user.username, role: user.role, point_id: pointId },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
     
-    res.json({ success: true, token, user: { id: user.id, username: user.username, role: user.role } });
+    res.json({ success: true, token, user: { id: user.id, username: user.username, role: user.role, point_id: pointId } });
   } catch (err) {
     console.error('Ошибка входа:', err);
     res.status(500).json({ error: err.message });
@@ -746,6 +1040,321 @@ app.get('/api/auth/verify', async (req, res) => {
     res.json({ valid: true, user: decoded });
   } catch (err) {
     res.status(401).json({ error: 'Неверный токен' });
+  }
+});
+
+// ============ COURiERS API ============
+
+// Регистрация курьера (только для админов)
+app.post('/api/couriers', async (req, res) => {
+  const { name, login, password, can_take_orders } = req.body;
+  
+  if (!name || !login || !password) {
+    return res.status(400).json({ error: 'Имя, логин и пароль обязательны' });
+  }
+  
+  try {
+    // Проверяем существует ли логин
+    const existingCourier = await get('SELECT * FROM couriers WHERE login = ?', [login]);
+    if (existingCourier) {
+      return res.status(400).json({ error: 'Курьер с таким логином уже существует' });
+    }
+    
+    // Хешируем пароль
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // is_active = 1 если can_take_orders = true, иначе 0
+    const isActive = can_take_orders !== false ? 1 : 0;
+    
+    // Создаем курьера
+    const result = await run(
+      'INSERT INTO couriers (name, login, password_hash, is_active) VALUES (?, ?, ?, ?)',
+      [name, login, hashedPassword, isActive]
+    );
+    
+    res.json({ success: true, id: result.lastID, name, login, is_active: isActive });
+  } catch (err) {
+    console.error('Ошибка регистрации курьера:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Вход курьера
+app.post('/api/couriers/login', async (req, res) => {
+  const { login, password } = req.body;
+  
+  if (!login || !password) {
+    return res.status(400).json({ error: 'Логин и пароль обязательны' });
+  }
+  
+  try {
+    // Ищем курьера по логину
+    const courier = await get('SELECT * FROM couriers WHERE login = ?', [login]);
+    if (!courier) {
+      return res.status(401).json({ error: 'Неверный логин или пароль' });
+    }
+    
+    if (!courier.is_active) {
+      return res.status(401).json({ error: 'Доступ курьера заблокирован. Обратитесь к администратору.' });
+    }
+    
+    // Проверяем пароль
+    const isValidPassword = await bcrypt.compare(password, courier.password_hash);
+    if (!isValidPassword) {
+      return res.status(401).json({ error: 'Неверный логин или пароль' });
+    }
+    
+    // Генерируем токен
+    const token = jwt.sign(
+      { id: courier.id, name: courier.name, login: courier.login, role: 'courier', can_take_orders: courier.is_active },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    res.json({ success: true, token, courier: { id: courier.id, name: courier.name, login: courier.login } });
+  } catch (err) {
+    console.error('Ошибка входа курьера:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Получить список курьеров (только для админов)
+app.get('/api/couriers', async (req, res) => {
+  try {
+    const couriers = await all('SELECT id, name, login, is_active, created_at FROM couriers ORDER BY name');
+    res.json(couriers);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Удалить курьера (только для админов)
+app.delete('/api/couriers/:id', async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    // Проверяем существует ли курьер
+    const courier = await get('SELECT * FROM couriers WHERE id = ?', [id]);
+    if (!courier) {
+      return res.status(404).json({ error: 'Курьер не найден' });
+    }
+    
+    await run('DELETE FROM couriers WHERE id = ?', [id]);
+    res.json({ success: true, message: 'Курьер удалён' });
+  } catch (err) {
+    console.error('Ошибка удаления курьера:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Переключить активность курьера (только для админов)
+app.put('/api/couriers/:id/toggle-active', async (req, res) => {
+  const { id } = req.params;
+  const { is_active } = req.body;
+  
+  try {
+    // Проверяем существует ли курьер
+    const courier = await get('SELECT * FROM couriers WHERE id = ?', [id]);
+    if (!courier) {
+      return res.status(404).json({ error: 'Курьер не найден' });
+    }
+    
+    const newStatus = is_active === 1 ? 1 : 0;
+    await run('UPDATE couriers SET is_active = ? WHERE id = ?', [newStatus, id]);
+    
+    res.json({ success: true, id, is_active: newStatus });
+  } catch (err) {
+    console.error('Ошибка переключения активности курьера:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Изменить пароль курьера (только для админов)
+app.put('/api/couriers/:id/change-password', async (req, res) => {
+  const { id } = req.params;
+  const { password } = req.body;
+  
+  if (!password) {
+    return res.status(400).json({ error: 'Пароль обязателен' });
+  }
+  
+  if (password.length < 4) {
+    return res.status(400).json({ error: 'Пароль должен быть минимум 4 символа' });
+  }
+  
+  try {
+    // Проверяем существует ли курьер
+    const courier = await get('SELECT * FROM couriers WHERE id = ?', [id]);
+    if (!courier) {
+      return res.status(404).json({ error: 'Курьер не найден' });
+    }
+    
+    // Хешируем новый пароль
+    const hashedPassword = await bcrypt.hash(password, 10);
+    await run('UPDATE couriers SET password_hash = ? WHERE id = ?', [hashedPassword, id]);
+    
+    res.json({ success: true, message: 'Пароль изменён' });
+  } catch (err) {
+    console.error('Ошибка изменения пароля курьера:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Получить заказы для конкретного курьера
+app.get('/api/couriers/orders', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Токен не предоставлен' });
+  }
+  
+  const token = authHeader.substring(7);
+  
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    
+    if (decoded.role !== 'courier') {
+      return res.status(403).json({ error: 'Доступ запрещён' });
+    }
+    
+    const { status } = req.query;
+    let query = 'SELECT * FROM orders WHERE courier_id = ?';
+    const params = [decoded.id];
+    
+    if (status) {
+      query += ' AND status = ?';
+      params.push(status);
+    }
+    
+    query += ' ORDER BY created_at DESC';
+    
+    const orders = await all(query, params);
+    orders.forEach(order => {
+      order.items = parseOrderItems(order.items);
+    });
+    
+    res.json(orders);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Назначить заказ на курьера
+app.put('/api/orders/:id/assign-courier', async (req, res) => {
+  const { id } = req.params;
+  const { courier_id, courier_name } = req.body;
+  
+  const moscowTime = new Date(new Date().getTime() + 3 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+  
+  try {
+    await run(
+      'UPDATE orders SET courier_id = ?, courier_name = ?, assigned_at = ? WHERE id = ?',
+      [courier_id, courier_name, moscowTime, id]
+    );
+    
+    const order = await get('SELECT * FROM orders WHERE id = ?', [id]);
+    order.items = parseOrderItems(order.items);
+    
+    // Уведомляем курьера через WebSocket
+    broadcast({ type: 'courier_assigned', order });
+    
+    res.json(order);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Курьер начал доставку
+app.put('/api/orders/:id/start-delivery', async (req, res) => {
+  const { id } = req.params;
+  const authHeader = req.headers.authorization;
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Токен не предоставлен' });
+  }
+  
+  const token = authHeader.substring(7);
+  
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    
+    if (decoded.role !== 'courier') {
+      return res.status(403).json({ error: 'Доступ запрещён' });
+    }
+    
+    const moscowTime = new Date(new Date().getTime() + 3 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+    
+    await run(
+      'UPDATE orders SET delivery_started_at = ?, status = ? WHERE id = ? AND courier_id = ?',
+      [moscowTime, 'в доставке', id, decoded.id]
+    );
+    
+    const order = await get('SELECT * FROM orders WHERE id = ?', [id]);
+    order.items = parseOrderItems(order.items);
+    
+    broadcast({ type: 'order_updated', order });
+    
+    res.json(order);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Курьер отметил доставку
+app.put('/api/orders/:id/delivered', async (req, res) => {
+  const { id } = req.params;
+  const { comment } = req.body;
+  const authHeader = req.headers.authorization;
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Токен не предоставлен' });
+  }
+  
+  const token = authHeader.substring(7);
+  
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    
+    if (decoded.role !== 'courier') {
+      return res.status(403).json({ error: 'Доступ запрещён' });
+    }
+    
+    const moscowTime = new Date(new Date().getTime() + 3 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+    
+    await run(
+      'UPDATE orders SET delivered_at = ?, status = ?, courier_comment = ? WHERE id = ? AND courier_id = ?',
+      [moscowTime, 'доставлен', comment || null, id, decoded.id]
+    );
+    
+    const order = await get('SELECT * FROM orders WHERE id = ?', [id]);
+    order.items = parseOrderItems(order.items);
+    
+    broadcast({ type: 'order_delivered', order });
+    
+    res.json(order);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Отмена назначения курьера (только админ)
+app.put('/api/orders/:id/unassign-courier', async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    await run(
+      'UPDATE orders SET courier_id = NULL, courier_name = NULL, assigned_at = NULL, delivery_started_at = NULL WHERE id = ?',
+      [id]
+    );
+    
+    const order = await get('SELECT * FROM orders WHERE id = ?', [id]);
+    order.items = parseOrderItems(order.items);
+    
+    broadcast({ type: 'order_updated', order });
+    
+    res.json(order);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -873,11 +1482,21 @@ function syncOrderToSite(endpoint, data) {
     return;
   }
   
+  console.log(`[Sync] Начало синхронизации ${endpoint}, SITE_URL=${SITE_URL}, NODE_ENV=${process.env.NODE_ENV}`);
+  
   // Если SITE_URL не настроен - пропускаем
-  if (!SITE_URL || SITE_URL.includes('localhost') && process.env.NODE_ENV === 'production') {
-    console.log(`[Sync] Пропущена синхронизация ${endpoint} (SITE_URL не настроен для production)`);
+  if (!SITE_URL) {
+    console.log(`[Sync] Пропущена синхронизация ${endpoint} (SITE_URL не настроен)`);
     return;
   }
+  
+  // В production режиме проверяем что URL не localhost
+  if (process.env.NODE_ENV === 'production' && SITE_URL.includes('localhost')) {
+    console.log(`[Sync] Пропущена синхронизация ${endpoint} (localhost запрещён в production)`);
+    return;
+  }
+  
+  console.log(`[Sync] Выполняем fetch к ${SITE_URL}${endpoint}`);
   
   fetch(`${SITE_URL}${endpoint}`, {
     method: 'POST',
@@ -887,6 +1506,12 @@ function syncOrderToSite(endpoint, data) {
     },
     body: JSON.stringify(data)
   })
+    .then(res => {
+      console.log(`[Sync] Ответ от ${endpoint}: статус=${res.status}`);
+      if (!res.ok) {
+        console.error(`[Sync] Ошибка синхронизации ${endpoint}: статус=${res.status}`);
+      }
+    })
     .then(() => console.log(`Синхронизация ${endpoint} с сайтом выполнена`))
     .catch(err => console.error(`Ошибка синхронизации ${endpoint}:`, err.message));
 }
@@ -918,10 +1543,22 @@ app.put('/api/products/reorder', async (req, res) => {
 
 app.post('/api/products', async (req, res) => {
   const { name, description, price, image_url, category_id, is_combo, combo_items } = req.body;
+  
+  // Логирование для отладки
+  console.log('[/api/products POST] Получены данные:', { name, description, price, image_url, category_id, is_combo });
+  console.log('[/api/products POST] req.body:', JSON.stringify(req.body));
+  
+  // Валидация обязательного поля name
+  if (!name || (typeof name === 'string' && name.trim() === '')) {
+    console.log('[/api/products POST] Ошибка: название товара пустое или не передано');
+    return res.status(400).json({ error: 'Название товара обязательно' });
+  }
+  
   try {
     const comboItemsJson = combo_items ? JSON.stringify(combo_items) : '[]';
+    console.log('[/api/products POST] Вставка в БД с name:', name.trim());
     const result = await run('INSERT INTO products (name, description, price, image_url, category_id, is_combo, combo_items) VALUES (?, ?, ?, ?, ?, ?, ?)', 
-      [name, description || '', price || 0, image_url || '', category_id || null, is_combo || 0, comboItemsJson]);
+      [name.trim(), description || '', price || 0, image_url || '', category_id || null, is_combo || 0, comboItemsJson]);
     const product = await get('SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.id = ?', [result.lastID]);
     broadcast({ type: 'product_created', product });
     res.json(product);
@@ -1017,19 +1654,58 @@ app.delete('/api/products/:id', async (req, res) => {
 
 // Заказы
 app.get('/api/orders', async (req, res) => {
-  const { status, date } = req.query;
+  const { status, date, point_id } = req.query;
   
-  console.log('[/api/orders] Запрос получен - date:', date, 'status:', status);
+  console.log('[/api/orders] Запрос получен - date:', date, 'status:', status, 'point_id:', point_id);
   
   try {
     let query = 'SELECT * FROM orders';
     const params = [];
     const conditions = [];
     
+    // Фильтр по точке (point_id)
+    // Если point_id передан в запросе - используем его
+    // Иначе пытаемся получить из токена
+    let filterPointId = point_id;
+    if (!filterPointId) {
+      // Пробуем получить из токена
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        try {
+          const token = authHeader.substring(7);
+          const decoded = jwt.verify(token, JWT_SECRET);
+          filterPointId = decoded.point_id;
+        } catch (e) {
+          // Токен невалиден, не фильтруем
+        }
+      }
+    }
+    
+    // Фильтруем по точке если point_id указан и не равен 0 (0 = все точки для админа)
+    if (filterPointId && filterPointId !== 0 && filterPointId !== '0') {
+      conditions.push('point_id = ?');
+      params.push(parseInt(filterPointId));
+      console.log('[/api/orders] Фильтр по точке:', filterPointId);
+    }
+    
     // Фильтр по дате
     if (date && date.trim() !== '') {
-      conditions.push('DATE(created_at) = ?');
-      params.push(date);
+      // Логика:
+      // - Если запрошен сегодняшний день (is_asap = 1) - показываем по created_at
+      // - Для предзаказов (is_asap = 0) - показываем по delivery_date
+      // Сравниваем даты с учётом того что delivery_date может содержать время
+      // Используем DATE() для извлечения даты или LIKE для частичного совпадения
+      // ВАЖНО: фильтруем пустые значения ДО применения DATE() чтобы избежать ошибки MySQL
+      const dbType = getDbType();
+      if (dbType === 'mysql') {
+        // ВАЖНО: используем CASE для преобразования пустых строк в NULL ДО применения DATE()
+        // чтобы избежать ошибки "Incorrect DATE value: ''"
+        conditions.push('(DATE(created_at) = ? AND (is_asap = 1 OR is_asap IS NULL)) OR (is_asap = 0 AND delivery_date IS NOT NULL AND delivery_date != \'\' AND delivery_date != \'NULL\' AND TRIM(delivery_date) != \'\' AND LENGTH(TRIM(delivery_date)) > 0 AND DATE(CASE WHEN delivery_date IS NOT NULL AND TRIM(delivery_date) != \'\' THEN TRIM(delivery_date) ELSE NULL END) = ?)');
+      } else {
+        // SQLite - используем substr для сравнения даты
+        conditions.push('(DATE(created_at) = ? AND (is_asap = 1 OR is_asap IS NULL)) OR (is_asap = 0 AND delivery_date IS NOT NULL AND delivery_date != \'\' AND delivery_date != \'NULL\' AND TRIM(delivery_date) != \'\' AND LENGTH(TRIM(delivery_date)) > 0 AND substr(TRIM(delivery_date), 1, 10) = ?)');
+      }
+      params.push(date, date);
       console.log('[/api/orders] Фильтр по дате:', date);
     }
     
@@ -1160,11 +1836,12 @@ app.post('/api/orders', async (req, res) => {
     
     const result = await run(
       `INSERT INTO orders 
-       (guest_name, guest_phone, guest_email, order_type, payment, comment, items, total_amount, 
+       (order_number, customer_id, guest_name, guest_phone, guest_email, order_type, payment, comment, items, total_amount, 
         discount_amount, discount_reason, status, created_at, address, street, building, apartment, entrance, floor, intercom, 
         is_asap, delivery_date, delivery_time, custom_time) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'новый', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
+        null, null,
         guest_name, guest_phone, guest_email || null, 
         order_type || 'delivery', payment || 'cash', comment || null, 
         JSON.stringify(items), finalAmount,
@@ -1218,7 +1895,7 @@ app.put('/api/orders/:id', async (req, res) => {
       [
         guest_name, guest_phone, guest_email || null,
         order_type || 'delivery', payment || 'cash', comment || null,
-        JSON.stringify(items), total_amount, status || 'pending',
+        JSON.stringify(items), total_amount, status || 'новый',
         fullAddress || null, street || null, building || null, apartment || null,
         entrance || null, floor || null, intercom || null,
         is_asap !== undefined ? (is_asap ? 1 : 0) : 1,
@@ -1243,14 +1920,28 @@ app.put('/api/orders/:id/status', async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
   try {
-    await run('UPDATE orders SET status = ? WHERE id = ?', [status, id]);
+    // Получаем заказ для проверки и получения site_order_id
     const order = await get('SELECT * FROM orders WHERE id = ?', [id]);
+    if (!order) {
+      return res.status(404).json({ error: 'Заказ не найден' });
+    }
+    
+    await run('UPDATE orders SET status = ? WHERE id = ?', [status, id]);
     order.items = parseOrderItems(order.items);
     
-    console.log(`[STATUS_CHANGE] Статус заказа #${id} изменён на "${status}"`);
+    console.log(`[STATUS_CHANGE] Статус заказа #${id} (site_order_id: ${order.site_order_id}) изменён на "${status}"`);
+    
+    // Синхронизируем статус с основным сайтом
+    // ВАЖНО: используем site_order_id если есть, иначе id
+    const orderIdForSync = order.site_order_id || id;
+    syncOrderToSite('/api/site/orders/status-sync', {
+      order_id: orderIdForSync,
+      status: status,
+      customer_id: order.customer_id
+    });
     
     // Автоматическая печать при изменении статуса
-    if (status === 'processing' || status === 'ready') {
+    if (status === 'в производстве' || status === 'произведен') {
       console.log(`[AUTO_PRINT] Автоматическая печать чека при смене статуса на "${status}" для заказа #${id}`);
       broadcast({ type: 'print_receipt', receipt: { orderId: order.id, autoPrint: true, reason: `status_change_${status}` } });
     }
@@ -1259,6 +1950,111 @@ app.put('/api/orders/:id/status', async (req, res) => {
     
     res.json(order);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============ ПРИНЯТИЕ ЗАКАЗА (С ВРЕМЕНЕМ ГОТОВНОСТИ) ============
+
+app.put('/api/orders/:id/accept', async (req, res) => {
+  const { id } = req.params;
+  const { ready_time } = req.body;
+  
+  console.log(`[ACCEPT_ORDER] Запрос на принятие заказа #${id}, ready_time: ${ready_time}`);
+  
+  try {
+    // Проверяем обязательный параметр ready_time
+    if (!ready_time) {
+      return res.status(400).json({ error: 'Параметр ready_time обязателен (формат HH:mm)' });
+    }
+    
+    // Валидируем формат времени (HH:mm)
+    const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    if (!timeRegex.test(ready_time)) {
+      return res.status(400).json({ error: 'Неверный формат времени. Используйте HH:mm (например, 15:30)' });
+    }
+    
+    // Получаем заказ для проверки
+    const order = await get('SELECT * FROM orders WHERE id = ?', [id]);
+    if (!order) {
+      return res.status(404).json({ error: 'Заказ не найден' });
+    }
+    
+    // Обновляем статус на "в производстве" и сохраняем ready_time
+    const newStatus = 'в производстве';
+    await run('UPDATE orders SET status = ?, ready_time = ? WHERE id = ?', [newStatus, ready_time, id]);
+    
+    // Получаем обновлённый заказ
+    const updatedOrder = await get('SELECT * FROM orders WHERE id = ?', [id]);
+    updatedOrder.items = parseOrderItems(updatedOrder.items);
+    
+    console.log(`[ACCEPT_ORDER] Заказ #${id} принят, статус: ${newStatus}, ready_time: ${ready_time}`);
+    
+    // Синхронизируем статус с основным сайтом
+    const orderIdForSync = order.site_order_id || id;
+    syncOrderToSite('/api/site/orders/status-sync', {
+      order_id: orderIdForSync,
+      status: newStatus,
+      ready_time: ready_time,
+      customer_id: order.customer_id
+    });
+    
+    // Автоматическая печать при принятии заказа
+    console.log(`[AUTO_PRINT] Автоматическая печать чека при принятии заказа #${id}`);
+    broadcast({ type: 'print_receipt', receipt: { orderId: updatedOrder.id, autoPrint: true, reason: 'order_accepted' } });
+    
+    broadcast({ type: 'order_accepted', order: updatedOrder });
+    
+    res.json({ success: true, order: updatedOrder });
+  } catch (err) {
+    console.error(`[ACCEPT_ORDER] Ошибка при принятии заказа #${id}:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============ ОТКЛОНЕНИЕ ЗАКАЗА ============
+
+app.put('/api/orders/:id/reject', async (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body;
+  
+  console.log(`[REJECT_ORDER] Запрос на отклонение заказа #${id}, причина: ${reason}`);
+  
+  try {
+    // Получаем заказ для проверки
+    const order = await get('SELECT * FROM orders WHERE id = ?', [id]);
+    if (!order) {
+      return res.status(404).json({ error: 'Заказ не найден' });
+    }
+    
+    // Обновляем статус на "отклонён"
+    const newStatus = 'отклонён';
+    
+    // Если есть причина отклонения, добавляем её в комментарий
+    const updatedComment = reason ? `[ОТКЛОНЁН: ${reason}] ${order.comment || ''}` : order.comment;
+    
+    await run('UPDATE orders SET status = ?, comment = ? WHERE id = ?', [newStatus, updatedComment, id]);
+    
+    // Получаем обновлённый заказ
+    const updatedOrder = await get('SELECT * FROM orders WHERE id = ?', [id]);
+    updatedOrder.items = parseOrderItems(updatedOrder.items);
+    
+    console.log(`[REJECT_ORDER] Заказ #${id} отклонён, статус: ${newStatus}`);
+    
+    // Синхронизируем статус с основным сайтом
+    const orderIdForSync = order.site_order_id || id;
+    syncOrderToSite('/api/site/orders/status-sync', {
+      order_id: orderIdForSync,
+      status: newStatus,
+      reason: reason || null,
+      customer_id: order.customer_id
+    });
+    
+    broadcast({ type: 'order_rejected', order: updatedOrder });
+    
+    res.json({ success: true, order: updatedOrder });
+  } catch (err) {
+    console.error(`[REJECT_ORDER] Ошибка при отклонении заказа #${id}:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1294,8 +2090,24 @@ app.put('/api/orders/:id/discount', async (req, res) => {
 app.delete('/api/orders/:id', async (req, res) => {
   const { id } = req.params;
   try {
+    // Получаем данные заказа перед удалением
+    const order = await get('SELECT * FROM orders WHERE id = ?', [id]);
+    
     await run('DELETE FROM orders WHERE id = ?', [id]);
     broadcast({ type: 'order_deleted', id });
+    
+    // Синхронизируем удаление с основным сайтом
+    try {
+      // Используем site_order_id если есть, чтобы основной сайт мог найти заказ
+      const orderIdForSync = order?.site_order_id || id;
+      syncOrderToSite('/api/site/orders/delete-sync', {
+        order_id: orderIdForSync
+      });
+      console.log(`[DELETE_SYNC] Удаление заказа #${id} синхронизировано с основным сайтом (ID: ${orderIdForSync})`);
+    } catch (syncErr) {
+      console.error(`[DELETE_SYNC] Ошибка синхронизации удаления:`, syncErr.message);
+    }
+    
     res.json({ message: 'Заказ удален' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1395,7 +2207,7 @@ app.get('/api/reports/sales', async (req, res) => {
         SUM(total_amount) as total_sales,
         AVG(total_amount) as avg_order_value
       FROM orders 
-      WHERE status != 'cancelled'
+      WHERE status != 'отменён'
     `;
     const params = [];
     if (date_from) {
@@ -1418,7 +2230,7 @@ app.get('/api/reports/sales', async (req, res) => {
 app.get('/api/reports/top-products', async (req, res) => {
   const { date_from, date_to, limit = 10 } = req.query;
   try {
-    let whereClause = "WHERE o.status != 'cancelled'";
+    let whereClause = "WHERE o.status != 'отменён'";
     const params = [];
     if (date_from) {
       whereClause += ' AND DATE(o.created_at) >= ?';
@@ -1432,17 +2244,24 @@ app.get('/api/reports/top-products', async (req, res) => {
     // Получаем все заказы за период
     const orders = await all(`SELECT items FROM orders ${whereClause}`, params);
     
+    if (!orders || orders.length === 0) {
+      return res.json([]);
+    }
+    
     // Подсчитываем популярность товаров
     const productStats = {};
     orders.forEach(order => {
+      if (!order || !order.items) return;
       const items = parseOrderItems(order.items);
+      if (!Array.isArray(items)) return;
       items.forEach(item => {
         const name = item.name || item.product_name;
+        if (!name) return;
         if (!productStats[name]) {
           productStats[name] = { product_name: name, total_quantity: 0, total_revenue: 0 };
         }
-        productStats[name].total_quantity += item.quantity;
-        productStats[name].total_revenue += (item.price * item.quantity);
+        productStats[name].total_quantity += parseFloat(item.quantity || 1);
+        productStats[name].total_revenue += (parseFloat(item.price || 0) * parseFloat(item.quantity || 1));
       });
     });
     
@@ -1452,6 +2271,7 @@ app.get('/api/reports/top-products', async (req, res) => {
     
     res.json(result);
   } catch (err) {
+    console.error('Error fetching top-products:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1462,10 +2282,10 @@ app.get('/api/reports/dashboard', async (req, res) => {
     const yesterday = moment().subtract(1, 'days').format('YYYY-MM-DD');
     const thisMonth = moment().format('YYYY-MM');
     
-    const todayOrders = await get(`SELECT COUNT(*) as count, SUM(total_amount) as total FROM orders WHERE DATE(created_at) = ? AND status != 'cancelled'`, [today]);
-    const yesterdayOrders = await get(`SELECT COUNT(*) as count, SUM(total_amount) as total FROM orders WHERE DATE(created_at) = ? AND status != 'cancelled'`, [yesterday]);
-    const monthOrders = await get(`SELECT COUNT(*) as count, SUM(total_amount) as total FROM orders WHERE LEFT(created_at, 7) = ? AND status != 'cancelled'`, [thisMonth]);
-    const pendingOrders = await get(`SELECT COUNT(*) as count FROM orders WHERE status IN ('pending', 'processing')`);
+    const todayOrders = await get(`SELECT COUNT(*) as count, SUM(total_amount) as total FROM orders WHERE DATE(created_at) = ? AND status != 'отменён'`, [today]);
+    const yesterdayOrders = await get(`SELECT COUNT(*) as count, SUM(total_amount) as total FROM orders WHERE DATE(created_at) = ? AND status != 'отменён'`, [yesterday]);
+    const monthOrders = await get(`SELECT COUNT(*) as count, SUM(total_amount) as total FROM orders WHERE LEFT(created_at, 7) = ? AND status != 'отменён'`, [thisMonth]);
+    const pendingOrders = await get(`SELECT COUNT(*) as count FROM orders WHERE status IN ('новый', 'в производстве')`);
     const totalProducts = await get('SELECT COUNT(*) as count FROM products');
     const totalCustomers = await get('SELECT COUNT(*) as count FROM customers');
     
@@ -1639,6 +2459,75 @@ app.delete('/api/addon-templates/:id', async (req, res) => {
   }
 });
 
+// ============ INVENTORY ============
+
+// Получить сводку по себестоимости товаров
+app.get('/api/inventory/summary', async (req, res) => {
+  try {
+    // Получаем все товары с рецептами
+    const products = await all(`
+      SELECT 
+        p.id as product_id,
+        p.name as product_name,
+        p.price as selling_price
+      FROM products p
+      WHERE p.is_active = 1
+      ORDER BY p.name
+    `);
+    
+    const summary = [];
+    
+    for (const product of products) {
+      // Получаем рецепт товара
+      const recipes = await all(`
+        SELECT r.quantity, r.unit, 
+               i.name as ingredient_name, i.cost_per_unit
+        FROM recipes r
+        JOIN ingredients i ON r.ingredient_id = i.id
+        WHERE r.product_id = ?
+      `, [product.product_id]);
+      
+      let costPrice = 0;
+      let profit = 0;
+      
+      if (recipes.length > 0) {
+        costPrice = recipes.reduce((sum, r) => sum + (parseFloat(r.cost_per_unit || 0) * parseFloat(r.quantity || 0)), 0);
+        profit = parseFloat(product.selling_price || 0) - costPrice;
+      }
+      
+      const profitPercent = product.selling_price > 0 ? (profit / product.selling_price) * 100 : 0;
+      
+      summary.push({
+        product_id: product.product_id,
+        product_name: product.product_name,
+        selling_price: product.selling_price,
+        cost_price: costPrice.toFixed(2),
+        profit: profit.toFixed(2),
+        profit_percent: profitPercent.toFixed(1)
+      });
+    }
+    
+    res.json(summary);
+  } catch (err) {
+    console.error('Error fetching inventory summary:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Получить движения склада
+app.get('/api/inventory-movements', async (req, res) => {
+  try {
+    const { limit = 50 } = req.query;
+    
+    // Пока возвращаем пустой массив - таблица inventory_movements не создана
+    // Можно расширить позже
+    res.json([]);
+  } catch (err) {
+    console.error('Error fetching inventory movements:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ============ INGREDIENTS ============
 
 app.get('/api/ingredients', async (req, res) => {
@@ -1773,26 +2662,83 @@ app.delete('/api/recipes/:id', async (req, res) => {
 
 // ============ PREORDER DATES ============
 
+// Endpoint для получения списка дат с предзаказами
 app.get('/api/preorder-dates', async (req, res) => {
   try {
-    const today = moment().format('YYYY-MM-DD');
-    const dates = await all(
-      `SELECT delivery_date, COUNT(*) as order_count FROM orders 
-       WHERE delivery_date IS NOT NULL AND delivery_date != '' AND delivery_date > ? 
-       AND status NOT IN ('delivered', 'cancelled') 
-       GROUP BY delivery_date ORDER BY delivery_date ASC`,
-      [today]
-    );
+    // Используем MySQL совместимую дату
+    const dbType = getDbType();
+    let today;
+    
+    if (dbType === 'mysql') {
+      // Для MySQL используем CURDATE()
+      const result = await get('SELECT CURDATE() as today');
+      today = result?.today || new Date().toISOString().slice(0, 10);
+    } else {
+      // Для SQLite используем moment
+      today = moment().format('YYYY-MM-DD');
+    }
+    
+    console.log('[/api/preorder-dates] Today:', today);
+    
+    // Получаем даты предзаказов (is_asap = 0) с будущей датой доставки
+    // ВАЖНО: используем подзапрос для фильтрации ДО агрегации, чтобы избежать ошибки MySQL
+    let dates;
+    if (dbType === 'mysql') {
+      // Используем подзапрос - сначала фильтруем записи, потом группируем
+      // CAST(order_count AS UNSIGNED) для возврата числа вместо строки
+      dates = await all(
+        `SELECT delivery_date, CAST(SUM(order_count) AS UNSIGNED) as order_count FROM (
+          SELECT 
+            TRIM(delivery_date) as delivery_date,
+            COUNT(*) as order_count
+          FROM orders
+          WHERE is_asap = 0 
+            AND delivery_date IS NOT NULL 
+            AND TRIM(delivery_date) != ''
+            AND TRIM(delivery_date) != 'NULL'
+            AND LENGTH(TRIM(delivery_date)) > 0
+            AND status NOT IN ('delivered', 'cancelled')
+          GROUP BY TRIM(delivery_date)
+        ) AS filtered 
+        WHERE delivery_date >= ? 
+        GROUP BY delivery_date
+        ORDER BY delivery_date ASC`,
+        [today]
+      );
+    } else {
+      // SQLite - добавляем проверку delivery_date != '' и TRIM()
+      dates = await all(
+        `SELECT MIN(delivery_date) as delivery_date, COUNT(*) as order_count FROM orders 
+         WHERE is_asap = 0 AND delivery_date IS NOT NULL AND delivery_date != '' AND delivery_date != 'NULL' AND TRIM(delivery_date) != '' AND LENGTH(TRIM(delivery_date)) > 0 AND substr(TRIM(delivery_date), 1, 10) >= ? 
+         AND status NOT IN ('delivered', 'cancelled') 
+         GROUP BY substr(TRIM(delivery_date), 1, 10) ORDER BY delivery_date ASC`,
+        [today]
+      );
+    }
+    
+    console.log('[/api/preorder-dates] Found dates:', dates);
     res.json(dates || []);
   } catch (err) {
+    console.error('[/api/preorder-dates] Error:', err.message);
     res.json([]);
   }
 });
 
 app.get('/api/preorders/:date', async (req, res) => {
   try {
+    const dbType = getDbType();
+    let today;
+    
+    if (dbType === 'mysql') {
+      const result = await get('SELECT CURDATE() as today');
+      today = result?.today || new Date().toISOString().slice(0, 10);
+    } else {
+      today = moment().format('YYYY-MM-DD');
+    }
+    
+    // Получаем предзаказы (is_asap = 0) на конкретную дату
     const orders = await all(
-      `SELECT * FROM orders WHERE delivery_date = ? AND delivery_date > date('now') 
+      `SELECT * FROM orders WHERE is_asap = 0 AND delivery_date = ? 
        AND status NOT IN ('delivered', 'cancelled') ORDER BY created_at DESC`,
       [req.params.date]
     );
@@ -1801,7 +2747,94 @@ app.get('/api/preorders/:date', async (req, res) => {
     });
     res.json(orders);
   } catch (err) {
+    console.error('[/api/preorders] Error:', err.message);
     res.json([]);
+  }
+});
+
+// ============ DELIVERY ZONES ============
+
+// Получить все точки
+app.get('/api/points', async (req, res) => {
+  try {
+    const points = await all('SELECT * FROM points WHERE is_active = 1 ORDER BY id ASC');
+    res.json(points || []);
+  } catch (err) {
+    console.error('Error fetching points:', err.message);
+    res.json([]);
+  }
+});
+
+// Получить все районы доставки
+app.get('/api/delivery-zones', async (req, res) => {
+  try {
+    const { point_id } = req.query;
+    let query = 'SELECT * FROM delivery_zones WHERE is_active = 1';
+    const params = [];
+    
+    // Фильтр по точке
+    if (point_id && point_id !== '0') {
+      query += ' AND point_id = ?';
+      params.push(parseInt(point_id));
+    }
+    
+    query += ' ORDER BY sort_order ASC, name ASC';
+    
+    const zones = await all(query, params);
+    res.json(zones || []);
+  } catch (err) {
+    console.error('Error fetching delivery zones:', err.message);
+    res.json([]);
+  }
+});
+
+// Получить район доставки по ID
+app.get('/api/delivery-zones/:id', async (req, res) => {
+  try {
+    const zone = await get('SELECT * FROM delivery_zones WHERE id = ?', [req.params.id]);
+    if (!zone) return res.status(404).json({ error: 'Район доставки не найден' });
+    res.json(zone);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Создать район доставки
+app.post('/api/delivery-zones', async (req, res) => {
+  const { name, min_order_amount, delivery_price, is_active, sort_order } = req.body;
+  try {
+    const result = await run(
+      'INSERT INTO delivery_zones (name, min_order_amount, delivery_price, is_active, sort_order) VALUES (?, ?, ?, ?, ?)',
+      [name, min_order_amount || 0, delivery_price || 0, is_active !== undefined ? (is_active ? 1 : 0) : 1, sort_order || 0]
+    );
+    res.json({ id: result.lastID, name, min_order_amount: min_order_amount || 0, delivery_price: delivery_price || 0, is_active: is_active || 1, sort_order: sort_order || 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Обновить район доставки
+app.put('/api/delivery-zones/:id', async (req, res) => {
+  const { name, min_order_amount, delivery_price, is_active, sort_order } = req.body;
+  try {
+    await run(
+      'UPDATE delivery_zones SET name = ?, min_order_amount = ?, delivery_price = ?, is_active = ?, sort_order = ? WHERE id = ?',
+      [name, min_order_amount || 0, delivery_price || 0, is_active !== undefined ? (is_active ? 1 : 0) : 1, sort_order || 0, req.params.id]
+    );
+    const zone = await get('SELECT * FROM delivery_zones WHERE id = ?', [req.params.id]);
+    res.json(zone);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Удалить район доставки
+app.delete('/api/delivery-zones/:id', async (req, res) => {
+  try {
+    await run('DELETE FROM delivery_zones WHERE id = ?', [req.params.id]);
+    res.json({ deleted: 1 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -2128,21 +3161,36 @@ app.post('/api/chats/:id/messages', async (req, res) => {
   const timestamp = new Date(new Date().getTime() + 3 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
   
   try {
+    // Проверяем существует ли чат
+    let chat = await get('SELECT * FROM chats WHERE id = ?', [id]);
+    let actualChatId = id;
+    
+    if (!chat) {
+      // Создаём чат если его нет
+      const result = await run(
+        `INSERT INTO chats (customer_id, customer_name, customer_phone, last_message, last_message_at, unread_count, status) 
+         VALUES (?, ?, ?, ?, ?, ?, 'active')`,
+        [null, 'Клиент', '', message || '', timestamp, 0]
+      );
+      actualChatId = result.lastID;
+      chat = await get('SELECT * FROM chats WHERE id = ?', [actualChatId]);
+      console.log(`[CHAT] Создан новый чат с ID: ${actualChatId}`);
+    }
+    
     const result = await run(
       `INSERT INTO chat_messages (chat_id, message, sender, sender_name, created_at) VALUES (?, ?, ?, ?, ?)`,
-      [id, message, sender, sender_name || 'Admin', timestamp]
+      [actualChatId, message, sender, sender_name || 'Admin', timestamp]
     );
     
     await run(
       `UPDATE chats SET last_message = ?, last_message_at = ?, unread_count = ? WHERE id = ?`,
-      [message, timestamp, sender === 'admin' ? 0 : 1, id]
+      [message, timestamp, sender === 'admin' ? 0 : 1, actualChatId]
     );
     
     // Если сообщение от админа - синхронизируем с основным сайтом
     if (sender === 'admin') {
       try {
-        // Получаем данные чата
-        const chat = await get('SELECT * FROM chats WHERE id = ?', [id]);
+        // Получаем данные чата (уже получили выше)
         if (chat) {
           await fetch(`${SITE_URL}/api/site/messages/sync-from-frontpad`, {
             method: 'POST',
@@ -2167,7 +3215,7 @@ app.post('/api/chats/:id/messages', async (req, res) => {
       }
     }
     
-    res.json({ id: result.lastID, chat_id: id, message, sender, sender_name, created_at: timestamp });
+    res.json({ id: result.lastID, chat_id: actualChatId, message, sender, sender_name, created_at: timestamp });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2180,6 +3228,80 @@ app.post('/api/chats/:id/read', async (req, res) => {
     await run('UPDATE chats SET unread_count = 0 WHERE id = ?', [id]);
     res.json({ success: true, chat_id: id });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DEBUG: Endpoint для проверки заказов с предзаказами
+app.get('/api/debug/preorders-check', async (req, res) => {
+  console.log('[/api/debug/preorders-check] DEBUG endpoint called');
+  try {
+    const dbType = getDbType();
+    let today;
+    
+    if (dbType === 'mysql') {
+      const result = await get('SELECT CURDATE() as today');
+      today = result?.today || new Date().toISOString().slice(0, 10);
+    } else {
+      today = moment().format('YYYY-MM-DD');
+    }
+    
+    // Получаем все заказы с is_asap = 0
+    const allPreorders = await all('SELECT id, site_order_id, order_number, is_asap, delivery_date, delivery_time, status, created_at FROM orders WHERE is_asap = 0 ORDER BY created_at DESC LIMIT 20');
+    
+    // Получаем все заказы с delivery_date
+    const allWithDeliveryDate = await all('SELECT id, site_order_id, order_number, is_asap, delivery_date, delivery_time, status, created_at FROM orders WHERE delivery_date IS NOT NULL AND delivery_date != "" ORDER BY created_at DESC LIMIT 20');
+    
+    // Получаем результат preorder-dates - используем подзапрос для избежания ошибки MySQL
+    // CAST(order_count AS UNSIGNED) для возврата числа вместо строки
+    let dates = [];
+    if (dbType === 'mysql') {
+      // Используем подзапрос - сначала фильтруем записи, потом группируем
+      dates = await all(
+        `SELECT delivery_date, CAST(SUM(order_count) AS UNSIGNED) as order_count FROM (
+          SELECT 
+            TRIM(delivery_date) as delivery_date,
+            COUNT(*) as order_count
+          FROM orders
+          WHERE is_asap = 0 
+            AND delivery_date IS NOT NULL 
+            AND TRIM(delivery_date) != ''
+            AND TRIM(delivery_date) != 'NULL'
+            AND LENGTH(TRIM(delivery_date)) > 0
+            AND status NOT IN ('delivered', 'cancelled')
+          GROUP BY TRIM(delivery_date)
+        ) AS filtered 
+        WHERE delivery_date >= ? 
+        GROUP BY delivery_date
+        ORDER BY delivery_date ASC`,
+        [today]
+      );
+    } else {
+      dates = await all(
+        `SELECT MIN(delivery_date) as delivery_date, COUNT(*) as order_count FROM orders 
+         WHERE is_asap = 0 AND delivery_date IS NOT NULL AND delivery_date != '' AND delivery_date != 'NULL' AND TRIM(delivery_date) != '' AND LENGTH(TRIM(delivery_date)) > 0 AND substr(TRIM(delivery_date), 1, 10) >= ? 
+         AND status NOT IN ('delivered', 'cancelled') 
+         GROUP BY substr(TRIM(delivery_date), 1, 10) ORDER BY delivery_date ASC`,
+        [today]
+      );
+    }
+    
+    console.log('[/api/debug/preorders-check] Today:', today);
+    console.log('[/api/debug/preorders-check] All preorders (is_asap=0):', allPreorders.length);
+    console.log('[/api/debug/preorders-check] All with delivery_date:', allWithDeliveryDate.length);
+    console.log('[/api/debug/preorders-check] Preorder dates:', dates.length);
+    
+    res.json({ 
+      today,
+      preorders_count: allPreorders.length,
+      preorders: allPreorders,
+      with_delivery_date_count: allWithDeliveryDate.length,
+      with_delivery_date: allWithDeliveryDate,
+      preorder_dates_count: dates.length,
+      preorder_dates: dates
+    });
+  } catch (err) {
+    console.error('[/api/debug/preorders-check] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -2204,7 +3326,8 @@ app.get('/api/debug/orders-feb14', async (req, res) => {
 // Endpoint для синхронизации заказов с основного сайта
 app.post('/api/site/orders/sync', async (req, res) => {
   const {
-    order_id, order_number, guest_name, guest_phone, guest_email,
+    order_id, order_number, customer_id,
+    guest_name, guest_phone, guest_email,
     order_type, address, entrance, floor, intercom,
     building, street, apartment,
     is_asap, delivery_date, delivery_time, custom_time,
@@ -2230,8 +3353,24 @@ app.post('/api/site/orders/sync', async (req, res) => {
     
     if (existingOrder) {
       // Заказ уже существует, обновляем его
+      // ВАЖНО: находим или создаём клиента по guest_phone, чтобы избежать ошибки foreign key
+      let frontpadCustomerId = null;
+      if (guest_phone) {
+        let customer = await get('SELECT id FROM customers WHERE phone = ?', [guest_phone]);
+        if (!customer) {
+          const result = await run(
+            'INSERT INTO customers (name, phone, email, address) VALUES (?, ?, ?, ?)',
+            [guest_name || 'Клиент', guest_phone, guest_email || null, address || null]
+          );
+          frontpadCustomerId = result.lastID;
+        } else {
+          frontpadCustomerId = customer.id;
+        }
+      }
+      
       await run(`
         UPDATE orders SET
+          customer_id = ?,
           guest_name = ?, guest_phone = ?, guest_email = ?,
           order_type = ?, address = ?, entrance = ?, floor = ?, intercom = ?,
           building = ?, street = ?, apartment = ?,
@@ -2240,11 +3379,12 @@ app.post('/api/site/orders/sync', async (req, res) => {
           created_at = ?
         WHERE site_order_id = ?
       `, [
+        frontpadCustomerId,
         guest_name, guest_phone, guest_email || null,
         order_type || 'delivery', address || null, entrance || null, floor || null, intercom || null,
         building || null, street || null, apartment || null,
         is_asap ? 1 : 0, delivery_date || null, delivery_time || null, custom_time || null,
-        payment || 'cash', comment || null, JSON.stringify(items), total_amount, status || 'pending',
+        payment || 'cash', comment || null, JSON.stringify(items), total_amount, status || 'новый',
         created_at || new Date().toISOString(),
         order_id
       ]);
@@ -2261,22 +3401,39 @@ app.post('/api/site/orders/sync', async (req, res) => {
       res.json({ message: 'Заказ обновлён', order: updatedOrder });
     } else {
       // Создаём новый заказ
+      // ВАЖНО: находим или создаём клиента по guest_phone, чтобы избежать ошибки foreign key
+      let frontpadCustomerId = null;
+      if (guest_phone) {
+        // Ищем клиента по телефону
+        let customer = await get('SELECT id FROM customers WHERE phone = ?', [guest_phone]);
+        if (!customer) {
+          // Создаём нового клиента
+          const result = await run(
+            'INSERT INTO customers (name, phone, email, address) VALUES (?, ?, ?, ?)',
+            [guest_name || 'Клиент', guest_phone, guest_email || null, address || null]
+          );
+          frontpadCustomerId = result.lastID;
+        } else {
+          frontpadCustomerId = customer.id;
+        }
+      }
+      
       const moscowTime = new Date(new Date().getTime() + 3 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
       
       const result = await run(`
         INSERT INTO orders
-        (site_order_id, order_number, guest_name, guest_phone, guest_email,
+        (site_order_id, order_number, customer_id, guest_name, guest_phone, guest_email,
          order_type, address, entrance, floor, intercom,
          building, street, apartment,
          is_asap, delivery_date, delivery_time, custom_time,
          payment, comment, items, total_amount, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
-        order_id, order_number, guest_name, guest_phone, guest_email || null,
+        order_id, order_number, frontpadCustomerId, guest_name, guest_phone, guest_email || null,
         order_type || 'delivery', address || null, entrance || null, floor || null, intercom || null,
         building || null, street || null, apartment || null,
         is_asap ? 1 : 0, delivery_date || null, delivery_time || null, custom_time || null,
-        payment || 'cash', comment || null, JSON.stringify(items), total_amount, status || 'pending',
+        payment || 'cash', comment || null, JSON.stringify(items), total_amount, status || 'новый',
         created_at || moscowTime
       ]);
       
@@ -2299,7 +3456,8 @@ app.post('/api/site/orders/sync', async (req, res) => {
       // Серверная печать (если настроено)
       if (autoPrintMode === 'server' && isServerPrintEnabled) {
         console.log(`[SERVER_PRINT] Запуск серверной печати для заказа #${order.id}`);
-        const receiptHTML = generateReceiptHTML(order, order.items);
+        const receiptSettings = await getReceiptSettings();
+        const receiptHTML = generateReceiptHTML(order, order.items, receiptSettings);
         const printResult = printReceiptSync(receiptHTML, order.id, true); // forceEnabled = true
         console.log(`[SERVER_PRINT] Результат:`, printResult);
         broadcast({ type: 'new_order', order, autoPrint: true, serverPrintResult: printResult });
@@ -2344,10 +3502,10 @@ app.post('/api/site/messages/sync', async (req, res) => {
       );
       chat = await get('SELECT * FROM chats WHERE id = ?', [result.lastID]);
     } else {
-      // Обновить последнее сообщение
+      // Обновить последнее сообщение, имя и телефон клиента
       await run(
-        `UPDATE chats SET last_message = ?, last_message_at = ?, unread_count = ? WHERE id = ?`,
-        [content || '', timestamp || new Date().toISOString(), is_admin ? 0 : 1, chat.id]
+        `UPDATE chats SET customer_name = ?, customer_phone = ?, last_message = ?, last_message_at = ?, unread_count = ? WHERE id = ?`,
+        [customer_name || chat.customer_name, customer_phone || chat.customer_phone, content || '', timestamp || new Date().toISOString(), is_admin ? 0 : 1, chat.id]
       );
     }
     
@@ -2404,6 +3562,27 @@ app.post('/api/site/chats/update', async (req, res) => {
   }
 });
 
+// ============ DELIVERY ZONES SYNC FOR MAIN SITE ============
+
+// Endpoint for main site to fetch delivery zones (public with sync token)
+app.get('/api/site/delivery-zones', async (req, res) => {
+  try {
+    const syncToken = req.headers['x-sync-token'];
+    const expectedToken = SITE_SYNC_TOKEN;
+    
+    // Allow access if sync token matches OR if no token is required (for development)
+    if (syncToken && syncToken !== expectedToken) {
+      return res.status(403).json({ error: 'Неверный токен синхронизации' });
+    }
+    
+    const zones = await all('SELECT id, name, min_order_amount, delivery_price, is_active, sort_order FROM delivery_zones WHERE is_active = 1 ORDER BY sort_order ASC, name ASC');
+    res.json(zones || []);
+  } catch (err) {
+    console.error('Error fetching delivery zones for site:', err.message);
+    res.json([]);
+  }
+});
+
 // ============ СИНХРОНИЗАЦИЯ КАТЕГОРИЙ ============
 
 // Синхронизация категорий с основного сайта
@@ -2429,6 +3608,27 @@ app.post('/api/categories/sync-from-site', async (req, res) => {
   } catch (error) {
     console.error('Ошибка sync-from-site:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// ============ DEBUG ENDPOINTS ============
+
+// Debug endpoint to list all unique statuses in orders table
+app.get('/api/debug/order-statuses', async (req, res) => {
+  try {
+    const dbType = getDbType();
+    let query;
+    if (dbType === 'mysql') {
+      query = `SELECT DISTINCT status FROM orders ORDER BY status`;
+    } else {
+      query = `SELECT DISTINCT status FROM orders ORDER BY status`;
+    }
+    const statuses = await all(query);
+    console.log('[/api/debug/order-statuses] Found statuses:', statuses);
+    res.json({ statuses: statuses.map(s => s.status) });
+  } catch (err) {
+    console.error('[/api/debug/order-statuses] Error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 

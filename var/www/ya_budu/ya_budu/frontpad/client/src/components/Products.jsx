@@ -28,10 +28,9 @@ if (typeof document !== 'undefined') {
   document.head.appendChild(styleSheet);
 }
 
-// Для локальной разработки используем localhost:3005
-// На продакшене используется переменная окружения REACT_APP_FONTPAD_API
-const API_URL = process.env.REACT_APP_FONTPAD_API || 'http://localhost:3005';
-const IMAGE_BASE_URL = process.env.REACT_APP_IMAGE_BASE_URL || 'http://localhost:3005/uploads/';
+// Используем относительный путь для работы через nginx
+const API_URL = process.env.REACT_APP_FONTPAD_API || '';
+const IMAGE_BASE_URL = process.env.REACT_APP_IMAGE_BASE_URL || '';
 
 // Создаём axios инстанс с таймаутом
 const apiClient = axios.create({
@@ -71,7 +70,7 @@ const Products = () => {
   
   // Обновляем localProducts при изменении products, сохраняя порядок
   useEffect(() => {
-    if (!loading && products.length > 0) {
+    if (!loading && products.length > 0 && !isSubmitting) {
       console.log('[useEffect] products changed:', products.length, 'items, localProducts:', localProducts.length);
       setLocalProducts(prev => {
         // Если prev пустой или products изменился существенно - обновляем
@@ -84,7 +83,7 @@ const Products = () => {
         return prev;
       });
     }
-  }, [products, loading]);
+  }, [products, loading, isSubmitting]);
   
   const [formData, setFormData] = useState({
     name: '',
@@ -100,6 +99,11 @@ const Products = () => {
   const [isCombo, setIsCombo] = useState(false);
   const [comboItems, setComboItems] = useState([]);
   const [comboSearch, setComboSearch] = useState('');
+  
+  // Состояние для выбора размера при добавлении товара в комбо
+  const [comboProductSizes, setComboProductSizes] = useState({}); // { productId: [sizes...] }
+  const [showSizeSelectModal, setShowSizeSelectModal] = useState(false);
+  const [selectedProductForCombo, setSelectedProductForCombo] = useState(null);
   
   // Состояния для размеров
   const [hasSizes, setHasSizes] = useState(false);
@@ -192,279 +196,311 @@ const Products = () => {
     }
   };
 
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [originalProductData, setOriginalProductData] = useState(null);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     
+    if (isSubmitting) return; // ✅ Защита от двойной отправки
+    setIsSubmitting(true);
+    
+    // ✅ ФИКС: Сохраняем оригинальные данные товара перед сохранением
+    setOriginalProductData({...editingProduct});
+    
     // Если это комбо - нужны items
     if (isCombo && comboItems.length === 0) {
-      alert('Добавьте товары в комбо');
-      return;
+        alert('Добавьте товары в комбо');
+        setIsSubmitting(false);
+        return;
     }
     
     // Если есть размеры - нужен хотя бы один размер
     if (hasSizes && sizes.length === 0) {
-      alert('Добавьте хотя бы один размер');
-      return;
+        alert('Добавьте хотя бы один размер');
+        setIsSubmitting(false);
+        return;
     }
     
     try {
-      let productId = editingProduct?.id;
-      
-      // Подготовка данных товара
-      const productData = {
-        ...formData,
-        is_combo: isCombo,
-        combo_items: comboItems,
-        // Если цена пустая или не число, используем текущую цену или 0
-        price: (formData.price !== undefined && formData.price !== '' && !isNaN(parseFloat(formData.price))) 
-          ? parseFloat(formData.price) 
-          : (editingProduct?.price || 0)
-      };
-      
-      // Если есть размеры и это НОВЫЙ товар, не отправляем цену
-      // (цена возьмётся из первого размера)
-      if (hasSizes && !editingProduct) {
-        delete productData.price;
-      }
-      
-      console.log('Отправка PUT:', productData);
-      console.log('[handleSubmit] Состояние чекбоксов:');
-      console.log('  - isCombo:', isCombo);
-      console.log('  - hasDiscount:', hasDiscount);
-      console.log('  - hasAddons:', hasAddons);
-      console.log('  - comboItems:', comboItems);
-      console.log('[handleSubmit] Состояние чекбоксов:');
-      console.log('  - isCombo:', isCombo);
-      console.log('  - hasDiscount:', hasDiscount);
-      console.log('  - hasAddons:', hasAddons);
-      console.log('  - comboItems:', comboItems);
-      
-      if (editingProduct) {
-        // Очищаем combo_items от лишних полей перед отправкой
-        // Формируем правильный массив для combo_items
-        let comboItemsToSend = [];
-        if (isCombo && comboItems.length > 0) {
-          // Если это комбо и есть items - используем их
-          comboItemsToSend = comboItems.map(item => ({
-            product_id: item.product_id,
-            product_price: item.product_price || 0,
-            quantity: item.quantity || 1
-          }));
-        } else if (editingProduct?.combo_items) {
-          // Иначе используем данные из editingProduct
-          try {
-            comboItemsToSend = typeof editingProduct.combo_items === 'string' 
-              ? JSON.parse(editingProduct.combo_items) 
-              : (Array.isArray(editingProduct.combo_items) ? editingProduct.combo_items : []);
-          } catch (e) {
-            comboItemsToSend = [];
-          }
-        }
+        let productId = editingProduct?.id;
         
-        const cleanProductData = {
-          ...productData,
-          is_combo: isCombo,
-          combo_items: isCombo ? comboItemsToSend : []
-        };
-        console.log('Clean PUT data:', cleanProductData);
-        await axios.put(`${API_URL}/api/products/${editingProduct.id}`, cleanProductData);
-        productId = editingProduct.id;
-      } else {
-        const response = await axios.post(`${API_URL}/api/products`, productData);
-        productId = response.data.id;
-      }
-      
-      // Сохраняем размеры
-      if (hasSizes && productId) {
-        console.log('=== Saving sizes, hasSizes=true, productId:', productId);
-        
-        if (!editingProduct) {
-          // НОВЫЙ ТОВАР: удаляем старые размеры и создаём новые
-          await axios.delete(`${API_URL}/api/products/${productId}/sizes`);
-          for (const size of sizes) {
-            await axios.post(`${API_URL}/api/products/${productId}/sizes`, {
-              name: size.name,
-              size_value: size.name,
-              price: size.price
-            });
-          }
-        } else {
-          // РЕДАКТИРОВАНИЕ: обновляем существующие размеры, НЕ удаляем!
-          // Это важно для сохранения size-addons!
-          console.log('=== Editing product - preserving existing sizes to keep size-addons');
-          for (const size of sizes) {
-            if (size.id && size.id > 100000000) {
-              // Новый размер (timestamp ID) - создаём
-              await axios.post(`${API_URL}/api/products/${productId}/sizes`, {
-                name: size.name,
-                size_value: size.name,
-                price: size.price
-              });
-            } else if (size.id) {
-              // Существующий размер - обновляем
-              await axios.put(`${API_URL}/api/products/${productId}/sizes/${size.id}`, {
-                name: size.name,
-                size_value: size.name,
-                price: size.price
-              });
-            }
-          }
-        }
-        // Обновляем основную цену товара (первый размер = основная цена)
-        // ВАЖНО: отправляем ВСЕ данные товара чтобы не стереть image_url и другие поля
-        // ВСЕГДА включаем combo_items чтобы не стереть их!
-        if (sizes.length > 0) {
-          // Формируем combo_items для отправки - используем текущий state comboItems
-          let comboItemsToSend = [];
-          if (isCombo && comboItems.length > 0) {
-            // Если это комбо и есть items в state - используем их
-            comboItemsToSend = comboItems.map(item => ({
-              product_id: item.product_id,
-              product_price: item.product_price || 0,
-              quantity: item.quantity || 1
-            }));
-          } else if (editingProduct?.combo_items) {
-            // Иначе используем данные из editingProduct (уже могут быть массивом или строкой)
+        // ✅ ФИКС ОШИБКИ: Сначала удаляем ВСЕ допы для размеров перед сохранением товара
+        if (editingProduct) {
             try {
-              comboItemsToSend = typeof editingProduct.combo_items === 'string' 
-                ? JSON.parse(editingProduct.combo_items) 
-                : (Array.isArray(editingProduct.combo_items) ? editingProduct.combo_items : []);
-            } catch (e) {
-              comboItemsToSend = [];
-            }
-          }
-          
-          const priceUpdateData = {
-            name: formData.name,
-            description: formData.description,
-            price: sizes[0].price,
-            category_id: formData.category_id,
-            image_url: formData.image_url,
-            is_active: formData.is_active,
-            is_combo: isCombo,
-            combo_items: isCombo ? comboItemsToSend : []
-          };
-          console.log('=== Sending second PUT with price update:', priceUpdateData);
-          await axios.put(`${API_URL}/api/products/${productId}`, priceUpdateData);
+                const sizesRes = await axios.get(`/api/products/${productId}/sizes`);
+                const sizesToClean = sizesRes.data || [];
+                for (const size of sizesToClean) {
+                    try {
+                        await axios.delete(`/api/products/${productId}/sizes/${size.id}/addons`);
+                    } catch (e) {}
+                }
+                // Ждём 1 секунду чтобы всё очистилось
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            } catch (e) {}
         }
-      } else if (!hasSizes && productId && editingProduct) {
-        // ВТОРОЙ ПУТ НУЖЕН ТОЛЬКО при редактировании товара БЕЗ размеров
-        // для обновления цены. НО только если цена реально изменилась!
-        // Иначе этот PUT будет стирать другие поля (image_url и т.д.)
-        const currentPrice = editingProduct.price || 0;
-        const newPriceRaw = formData.price;
-        const newPrice = newPriceRaw === '' || newPriceRaw === undefined || newPriceRaw === null || isNaN(parseFloat(newPriceRaw)) 
-          ? null  // Если цена пустая - не обновляем её
-          : parseFloat(newPriceRaw);
         
-        // Если новая цена пустая или равна старой - пропускаем PUT
-        if (newPrice === null) {
-          console.log('=== Price is empty, skipping second PUT');
-        } else if (Math.abs(newPrice - currentPrice) > 0.01) {
-          console.log('=== Price changed from', currentPrice, 'to', newPrice, '- sending update');
-          await axios.put(`${API_URL}/api/products/${productId}`, {
-            price: newPrice
-          });
+        // Подготовка данных товара
+        const productData = {
+            ...formData,
+            is_combo: isCombo,
+            combo_items: comboItems,
+            price: (formData.price !== undefined && formData.price !== '' && !isNaN(parseFloat(formData.price)))
+                ? parseFloat(formData.price)
+                : (editingProduct?.price || 0)
+        };
+        
+        // Если есть размеры и это НОВЫЙ товар, не отправляем цену (возьмётся из первого размера)
+        if (hasSizes && !editingProduct) {
+            delete productData.price;
+        }
+        
+        // ✅ ФИНАЛЬНЫЙ ФИКС: сначала сохраняем все размеры и допы, ТОЛЬКО ПОТОМ обновляем товар!
+        if (!editingProduct) {
+            const response = await axios.post(`${API_URL}/api/products`, productData);
+            productId = response.data.id;
         } else {
-          console.log('=== Price unchanged (' + newPrice + '), skipping second PUT');
+            productId = editingProduct.id;
         }
-      }
-      
-      // Сохраняем скидку на товар
-      if (hasDiscount && productId) {
-        // Удаляем старые скидки
-        await axios.delete(`${API_URL}/api/products/${productId}/discounts`);
-        if (discount.value) {
-          await axios.post(`${API_URL}/api/products/${productId}/discounts`, {
-            name: `Скидка на ${formData.name}`,
-            type: discount.type,
-            value: parseFloat(discount.value),
-            valid_from: discount.valid_from || null,
-            valid_to: discount.valid_to || null,
-            is_active: 1
-          });
+        
+        // ✅ ЕДИНСТВЕННЫЙ РАБОЧИЙ СПОСОБ: Frontpad УДАЛЯЕТ ВСЕ РАЗМЕРЫ ПРИ ОБНОВЛЕНИИ ТОВАРА!
+        let newSizesLocal = [...sizes];
+        let newSizeAddonsLocal = {...sizeAddons};
+        
+        // 1. СНАЧАЛА ОБНОВЛЯЕМ ТОВАР - Frontpad удалит все размеры на этом шаге
+        if (editingProduct) {
+            // Очищаем combo_items от лишних полей
+            let comboItemsToSend = [];
+            if (isCombo && comboItems.length > 0) {
+                comboItemsToSend = comboItems.map(item => ({
+                    product_id: item.product_id,
+                    product_price: item.product_price || 0,
+                    quantity: item.quantity || 1,
+                    size_id: item.size_id || null,
+                    size_name: item.size_name || null
+                }));
+            } else if (editingProduct?.combo_items) {
+                try {
+                    comboItemsToSend = typeof editingProduct.combo_items === 'string'
+                        ? JSON.parse(editingProduct.combo_items)
+                        : (Array.isArray(editingProduct.combo_items) ? editingProduct.combo_items : []);
+                } catch (e) {
+                    comboItemsToSend = [];
+                }
+            }
+            
+            const cleanProductData = {
+                ...productData,
+                is_combo: isCombo,
+                combo_items: isCombo ? comboItemsToSend : []
+            };
+            
+            await axios.put(`${API_URL}/api/products/${editingProduct.id}`, cleanProductData);
         }
-      } else if (productId) {
-        // Если скидка отключена - удаляем все скидки товара
-        await axios.delete(`${API_URL}/api/products/${productId}/discounts`);
-      }
-      
-      // Сохраняем допы
-      if (hasAddons && productId) {
-        // Удаляем старые допы
-        await axios.delete(`${API_URL}/api/products/${productId}/addons`);
-        // Добавляем новые допы
-        for (const addon of selectedAddons) {
-          await axios.post(`${API_URL}/api/products/${productId}/addons`, {
-            addon_template_id: addon.addon_template_id,
-            custom_price: addon.custom_price || null
-          });
+        
+        // ✅ Ждём 3 секунды пока Frontpad закончит удалять размеры в фоне
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        // 2. ПОТОМ СОЗДАЁМ ВСЕ РАЗМЕРЫ ЗАНОВО!
+        if (hasSizes && productId) {
+            const sizeIdMap = {};
+            
+            for (let i = 0; i < sizes.length; i++) {
+                const size = sizes[i];
+                // Создаём размер заново
+                const response = await axios.post(`/api/products/${productId}/sizes`, {
+                    name: size.name,
+                    size_value: size.name,
+                    price_modifier: size.price
+                });
+                newSizesLocal[i] = {
+                    ...size,
+                    id: response.data.id
+                };
+                sizeIdMap[size.id] = response.data.id;
+            }
+            
+            // Обновляем ID размеров в sizeAddons
+            Object.entries(sizeAddons).forEach(([oldSizeId, addons]) => {
+                const newSizeId = sizeIdMap[oldSizeId];
+                if (newSizeId) {
+                    newSizeAddonsLocal[newSizeId] = addons;
+                }
+            });
+            
+            setSizes(newSizesLocal);
+            setSizeAddons(newSizeAddonsLocal);
         }
-      } else if (productId) {
-        // Если допы отключены - удаляем все допы товара
-        await axios.delete(`${API_URL}/api/products/${productId}/addons`);
-      }
-      
-       // Сохраняем допы для размеров (только при редактировании)
-       if (editingProduct && hasSizes && productId) {
-         // Для каждого размера сохраняем его допы
-         for (const size of sizes) {
-           const sizeAddonList = sizeAddons[size.id] || [];
-           
-           // Удаляем старые допы этого размера через bulk endpoint
-           try {
-             await axios.delete(`${API_URL}/api/products/${productId}/sizes/${size.id}/addons`);
-           } catch (e) {
-             // Игнорируем ошибку если размер новый
-           }
-           
-           // Добавляем новые допы размера
-           for (const addon of sizeAddonList) {
-             try {
-               await axios.post(`${API_URL}/api/sizes/${size.id}/addons`, {
-                 addon_id: addon.addon_id || addon.id,
-                 is_required: addon.is_required || 0,
-                 price_modifier: addon.price_modifier || 0
-               });
-             } catch (e) {
-               console.error('Ошибка сохранения допа размера:', e.message);
-             }
-           }
-         }
-       }
-       
-      setShowModal(false);
-      setEditingProduct(null);
-      resetForm();
-      
-      // Обновляем локальные данные без сброса сортировки
-      // Сначала обновляем данные товара локально
-      if (editingProduct) {
-        // Редактирование - обновляем существующий товар
-        setLocalProducts(prev => prev.map(p => 
-          p.id === editingProduct.id 
-            ? { ...p, ...formData, price: parseFloat(formData.price) || 0, is_featured: formData.is_featured }
-            : p
-        ));
-      } else {
-        // Создание нового товара - добавляем в локальный список
-        // Данные придут с сервера через следующий рендер
-      }
-      
-      // НЕ вызываем refreshProducts() - это сбросит сортировку
-      // Данные синхронизируются через DataContext/WebSocket автоматически
+        
+        // 2. Сохраняем все допы для размеров
+        if (editingProduct && hasSizes && productId) {
+            for (const size of newSizesLocal) {
+                const sizeAddonList = newSizeAddonsLocal[size.id] || [];
+                try {
+                    await axios.delete(`/api/products/${productId}/sizes/${size.id}/addons`);
+                } catch (e) {}
+                for (const addon of sizeAddonList) {
+                    try {
+                        await axios.post(`/api/sizes/${size.id}/addons`, {
+                            addon_id: addon.addon_id || addon.id,
+                            is_required: addon.is_required || 0,
+                            price_modifier: addon.price_modifier || 0
+                        });
+                    } catch (e) {
+                        console.error('Ошибка сохранения допа размера:', e.message);
+                    }
+                }
+            }
+        }
+        
+        // 3. Обновляем товар
+        if (editingProduct) {
+            // Очищаем combo_items от лишних полей
+            let comboItemsToSend = [];
+            if (isCombo && comboItems.length > 0) {
+                comboItemsToSend = comboItems.map(item => ({
+                    product_id: item.product_id,
+                    product_price: item.product_price || 0,
+                    quantity: item.quantity || 1,
+                    size_id: item.size_id || null,
+                    size_name: item.size_name || null
+                }));
+            } else if (editingProduct?.combo_items) {
+                try {
+                    comboItemsToSend = typeof editingProduct.combo_items === 'string'
+                        ? JSON.parse(editingProduct.combo_items)
+                        : (Array.isArray(editingProduct.combo_items) ? editingProduct.combo_items : []);
+                } catch (e) {
+                    comboItemsToSend = [];
+                }
+            }
+            
+            const cleanProductData = {
+                ...productData,
+                is_combo: isCombo,
+                combo_items: isCombo ? comboItemsToSend : []
+            };
+            
+            await axios.put(`${API_URL}/api/products/${editingProduct.id}`, cleanProductData);
+        }
+        
+        // 4. ✅ ГАРАНТИРОВАННО СОХРАНЯЕМ ДОПЫ С ПОВТОРНЫМИ ПОПЫТКАМИ
+        if (editingProduct && hasSizes && productId) {
+            // Функция которая пытается сохранить допы с повторными попытками
+            const saveSizeAddonsWithRetry = async () => {
+                for (let attempt = 0; attempt < 15; attempt++) {
+                    console.log(`[Сохранение допов] Попытка ${attempt + 1}/15`);
+                    
+                    let allSuccess = true;
+                    
+                    for (const size of newSizesLocal) {
+                        const sizeAddonList = newSizeAddonsLocal[size.id] || [];
+                        if (sizeAddonList.length === 0) continue;
+                        
+                        try {
+                            await axios.delete(`/api/products/${productId}/sizes/${size.id}/addons`);
+                        } catch (e) {}
+                        
+                        for (const addon of sizeAddonList) {
+                            try {
+                                await axios.post(`/api/sizes/${size.id}/addons`, {
+                                    addon_id: addon.addon_id || addon.id,
+                                    is_required: addon.is_required || 0,
+                                    price_modifier: addon.price_modifier || 0
+                                });
+                            } catch (e) {
+                                allSuccess = false;
+                                break;
+                            }
+                        }
+                        
+                        if (!allSuccess) break;
+                    }
+                    
+                    if (allSuccess) {
+                        console.log('[Сохранение допов] ВСЕ ДОПЫ УСПЕШНО СОХРАНЕНЫ!');
+                        return true;
+                    }
+                    
+                    // Ждём 1 секунду перед следующей попыткой
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+                
+                console.error('[Сохранение допов] Не удалось сохранить допы после 15 попыток');
+                return false;
+            };
+            
+            // Запускаем сохранение допов в фоне
+            setTimeout(saveSizeAddonsWithRetry, 2000);
+        }
+        
+        // Сохраняем скидку на товар
+        if (hasDiscount && productId) {
+            await axios.delete(`${API_URL}/api/products/${productId}/discounts`);
+            if (discount.value) {
+                await axios.post(`${API_URL}/api/products/${productId}/discounts`, {
+                    name: `Скидка на ${formData.name}`,
+                    type: discount.type,
+                    value: parseFloat(discount.value),
+                    valid_from: discount.valid_from || null,
+                    valid_to: discount.valid_to || null,
+                    is_active: 1
+                });
+            }
+        } else if (productId) {
+            await axios.delete(`${API_URL}/api/products/${productId}/discounts`);
+        }
+        
+        // Сохраняем допы
+        if (hasAddons && productId) {
+            await axios.delete(`${API_URL}/api/products/${productId}/addons`);
+            for (const addon of selectedAddons) {
+                await axios.post(`${API_URL}/api/products/${productId}/addons`, {
+                    addon_template_id: addon.addon_template_id,
+                    custom_price: addon.custom_price || null
+                });
+            }
+        } else if (productId) {
+            await axios.delete(`${API_URL}/api/products/${productId}/addons`);
+        }
+        
+
+        
+        // ✅ ЗАКРЫВАЕМ МОДАЛКУ И СБРАСЫВАЕМ ФОРМУ
+        setShowModal(false);
+        setEditingProduct(null);
+        resetForm();
+        setOriginalProductData(null);
+        
+        // ✅ ПЕРЕЗАГРУЖАЕМ ДАННЫЕ ТОВАРА ДЛЯ АКТУАЛЬНОГО STATE
+        if (editingProduct?.id) {
+            setTimeout(async () => {
+                try {
+                    const res = await axios.get(`${API_URL}/api/products/${editingProduct.id}`);
+                    // Обновляем в локальном state если нужно
+                    setLocalProducts(prev => prev.map(p => 
+                        p.id === editingProduct.id ? { ...p, ...res.data } : p
+                    ));
+                } catch (e) {
+                    console.error('Error reloading product:', e);
+                }
+            }, 1000);
+        }
+        
     } catch (error) {
-      console.error('Error saving product:', error);
-      // Показываем специфическую ошибку если есть
-      if (error.response?.data?.error) {
-        alert(error.response.data.error);
-      } else {
-        alert('Ошибка при сохранении товара');
-      }
+        console.error('Error saving product:', error);
+        if (error.response?.data?.error) {
+            alert(error.response.data.error);
+        } else {
+            alert('Ошибка при сохранении товара');
+        }
+    } finally {
+        setIsSubmitting(false); // ✅ Сбрасываем флаг в любом случае
     }
-  };
+};
 
   const handleEdit = async (product) => {
+    console.log('[handleEdit] API_URL:', API_URL);
     console.log('[handleEdit] Начало загрузки товара:', product.id, product.name);
     console.log('[handleEdit] is_combo из продукта:', product.is_combo, typeof product.is_combo);
     console.log('[handleEdit] combo_items из продукта:', product.combo_items);
@@ -523,11 +559,20 @@ const Products = () => {
     // Загружаем размеры
     try {
       const sizesRes = await axios.get(`${API_URL}/api/products/${product.id}/sizes`);
-      setSizes(sizesRes.data || []);
-      setHasSizes(sizesRes.data && sizesRes.data.length > 0);
+      // Проверяем, что ответ содержит данные
+      const sizesData = sizesRes.data || [];
+      setSizes(Array.isArray(sizesData) ? sizesData : []);
+      setHasSizes(Array.isArray(sizesData) && sizesData.length > 0);
     } catch (error) {
-      setSizes([]);
-      setHasSizes(false);
+      // Если сервер вернул 404 - значит размеров нет, это нормально
+      if (error.response?.status === 404) {
+        setSizes([]);
+        setHasSizes(false);
+      } else {
+        setSizes([]);
+        setHasSizes(false);
+        console.error('Ошибка загрузки размеров:', error.message);
+      }
     }
     
     // Загружаем скидки
@@ -570,6 +615,7 @@ const Products = () => {
     let hasAnySizeAddons = false;
     try {
       const sizesWithAddonsRes = await axios.get(`${API_URL}/api/products/${product.id}/size-addons`);
+      console.log('[handleEdit] Size-addons загружены:', sizesWithAddonsRes.data);
       const sizesWithAddonsObj = sizesWithAddonsRes.data || {};
       
       // Формируем map { sizeId: [addonData...] } - API возвращает объект с ключами как СТРОКИ
@@ -587,10 +633,12 @@ const Products = () => {
       });
       setSizeAddons(sizeAddonsMap);
     } catch (error) {
+      console.log('[handleEdit] Ошибка загрузки size-addons:', error.message, error.response?.data);
       setSizeAddons({});
     }
     
     // Устанавливаем hasAddons: true если есть обычные допы ИЛИ size-addons
+    console.log('[handleEdit] Установка hasAddons: hasRegularAddons =', hasRegularAddons, ', hasAnySizeAddons =', hasAnySizeAddons);
     setHasAddons(hasRegularAddons || hasAnySizeAddons);
     
     // Логируем итоговое состояние (используем временные переменные)
@@ -609,6 +657,9 @@ const Products = () => {
     setIsCombo(false);
     setComboItems([]);
     setComboSearch('');
+    setComboProductSizes({});
+    setSelectedProductForCombo(null);
+    setShowSizeSelectModal(false);
     setHasSizes(false);
     setSizes([]);
     setNewSize({ name: '', price: '' });
@@ -685,10 +736,13 @@ const Products = () => {
     }
     
     const newSizeAddons = { ...sizeAddons };
-    if (!newSizeAddons[selectedSizeForAddons]) {
-      newSizeAddons[selectedSizeForAddons] = [];
+    // Обновляем размеры с новым допом
+    const updatedSizeAddons = {...sizeAddons};
+    if (!updatedSizeAddons[selectedSizeForAddons]) {
+      updatedSizeAddons[selectedSizeForAddons] = [];
     }
-    newSizeAddons[selectedSizeForAddons].push({
+
+    updatedSizeAddons[selectedSizeForAddons].push({
       addon_id: addonTemplate.id,
       name: addonTemplate.name,
       price: addonTemplate.default_price || 0,
@@ -717,12 +771,14 @@ const Products = () => {
     }
   };
 
+  // URL изображения - используем абсолютный путь для работы через nginx
   const getImageUrl = (imageUrl) => {
     if (!imageUrl) return null;
-    if (imageUrl.startsWith('http')) return imageUrl;
-    // Убираем /uploads из начала если есть
-    const cleanPath = imageUrl.replace(/^\/uploads\//, '');
-    return IMAGE_BASE_URL + cleanPath;
+    // Если это относительный путь - добавляем /uploads если его нет
+    if (!imageUrl.startsWith('/')) {
+      return '/uploads/' + imageUrl;
+    }
+    return imageUrl;
   };
 
   const filteredProducts = localProducts.filter(p => 
@@ -883,21 +939,61 @@ const Products = () => {
   }, [groupedProducts]);
 
   // Функции для управления combo items
-  const addProductToCombo = (product) => {
+  const addProductToCombo = async (product) => {
+    // Проверяем есть ли у товара размеры
+    try {
+      const sizesRes = await axios.get(`${API_URL}/api/products/${product.id}/sizes`);
+      const productSizes = sizesRes.data || [];
+      
+      if (Array.isArray(productSizes) && productSizes.length > 0) {
+        // Если есть размеры - показываем модалку выбора
+        setComboProductSizes(prev => ({ ...prev, [product.id]: productSizes }));
+        setSelectedProductForCombo(product);
+        setShowSizeSelectModal(true);
+      } else {
+        // Нет размеров - добавляем сразу
+        addToComboWithSize(product, null, product.price || 0);
+      }
+    } catch (error) {
+      // Если сервер вернул 404 - значит размеров нет, это нормально
+      if (error.response?.status === 404) {
+        addToComboWithSize(product, null, product.price || 0);
+      } else {
+        console.error('Ошибка загрузки размеров товара:', error);
+        // Добавляем без размеров
+        addToComboWithSize(product, null, product.price || 0);
+      }
+    }
+  };
+  
+  // Добавить товар в комбо с указанным размером
+  const addToComboWithSize = (product, size, price) => {
     const items = Array.isArray(comboItems) ? comboItems : [];
-    const existing = items.find(i => i.product_id === product.id);
+    const existing = items.find(i => i.product_id === product.id && i.size_id === (size?.id || null));
     if (existing) {
       setComboItems(comboItems.map(i =>
-        i.product_id === product.id ? { ...i, quantity: i.quantity + 1 } : i
+        i.product_id === product.id && i.size_id === (size?.id || null) 
+          ? { ...i, quantity: i.quantity + 1 } 
+          : i
       ));
     } else {
       setComboItems([...comboItems, {
         product_id: product.id,
         product_name: product.name,
-        product_price: product.price || 0,
-        quantity: 1
+        product_price: price || 0,
+        quantity: 1,
+        size_id: size?.id || null,
+        size_name: size?.name || null
       }]);
     }
+  };
+  
+  // Обработка выбора размера в модалке
+  const handleSizeSelectForCombo = (product, size) => {
+    const price = size?.price || product.price || 0;
+    addToComboWithSize(product, size, price);
+    setShowSizeSelectModal(false);
+    setSelectedProductForCombo(null);
   };
 
   const updateComboItemQuantity = (productId, quantity) => {
@@ -1543,7 +1639,14 @@ const Products = () => {
                             <tbody>
                               {(Array.isArray(comboItems) ? comboItems : []).filter(item => item && item.product_id).map((item, idx) => (
                                 <tr key={idx}>
-                                  <td>{item.product_name}</td>
+                                  <td>
+                                    <div>{item.product_name}</div>
+                                    {item.size_name && (
+                                      <div style={{ fontSize: '11px', color: '#0ea5e9' }}>
+                                        Размер: {item.size_name}
+                                      </div>
+                                    )}
+                                  </td>
                                   <td>
                                     <input
                                       type="number"
@@ -2050,13 +2153,13 @@ const Products = () => {
                                           Обязательный
                                         </span>
                                       )}
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const newSizeAddons = { ...sizeAddons };
-                                          newSizeAddons[size.id] = (newSizeAddons[size.id] || []).filter(a => a.addon_id !== addon.addon_id);
-                                          setSizeAddons(newSizeAddons);
-                                        }}
+                                       <button
+                                         type="button"
+                                         onClick={() => {
+                                           const newSizeAddons = { ...sizeAddons };
+                                           newSizeAddons[size.id] = (newSizeAddons[size.id] || []).filter(a => a.addon_id !== addon.addon_id);
+                                           setSizeAddons(newSizeAddons);
+                                         }}
                                         style={{ 
                                           background: '#ef4444', 
                                           color: 'white', 
@@ -2316,6 +2419,65 @@ const Products = () => {
                 disabled={!selectedAddonTemplate}
               >
                 Добавить
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Модалка выбора размера для комбо */}
+      {showSizeSelectModal && selectedProductForCombo && (
+        <div className="modal-overlay" onClick={() => { setShowSizeSelectModal(false); setSelectedProductForCombo(null); }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px' }}>
+            <div className="modal-header">
+              <h3 className="modal-title">
+                Выберите размер
+              </h3>
+              <button onClick={() => { setShowSizeSelectModal(false); setSelectedProductForCombo(null); }}><X size={20} /></button>
+            </div>
+            <div className="modal-body">
+              <p style={{ marginBottom: '16px' }}>
+                <strong>{selectedProductForCombo.name}</strong> - выберите размер:
+              </p>
+              
+              {/* Кнопка добавления без размера */}
+              <button
+                className="btn"
+                style={{ 
+                  width: '100%', 
+                  marginBottom: '12px',
+                  background: comboItems.find(i => i.product_id === selectedProductForCombo.id && !i.size_id) ? '#22c55e' : '#f3f4f6',
+                  color: comboItems.find(i => i.product_id === selectedProductForCombo.id && !i.size_id) ? 'white' : '#374151',
+                  border: '1px solid #d1d5db'
+                }}
+                onClick={() => handleSizeSelectForCombo(selectedProductForCombo, null)}
+              >
+                Без размера - {selectedProductForCombo.price} ₽
+              </button>
+              
+              {/* Список размеров */}
+              {(comboProductSizes[selectedProductForCombo.id] || []).map(size => (
+                <button
+                  key={size.id}
+                  className="btn"
+                  style={{ 
+                    width: '100%', 
+                    marginBottom: '8px',
+                    background: comboItems.find(i => i.product_id === selectedProductForCombo.id && i.size_id === size.id) ? '#22c55e' : '#f0f9ff',
+                    color: comboItems.find(i => i.product_id === selectedProductForCombo.id && i.size_id === size.id) ? 'white' : '#0ea5e9',
+                    border: '1px solid #0ea5e9'
+                  }}
+                  onClick={() => handleSizeSelectForCombo(selectedProductForCombo, size)}
+                >
+                  {size.name} - {parseFloat(size.price || 0).toFixed(2)} ₽
+                </button>
+              ))}
+            </div>
+            <div className="modal-footer">
+              <button 
+                className="btn btn-secondary" 
+                onClick={() => { setShowSizeSelectModal(false); setSelectedProductForCombo(null); }}
+              >
+                Отмена
               </button>
             </div>
           </div>

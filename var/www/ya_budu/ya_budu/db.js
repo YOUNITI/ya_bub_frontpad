@@ -155,7 +155,11 @@ async function createTables() {
             comment TEXT,
             items TEXT NOT NULL,
             total_amount REAL DEFAULT 0,
+            zone_id INTEGER,
+            delivery_price INTEGER DEFAULT 0,
+            zone_name TEXT,
             status TEXT DEFAULT 'pending',
+            ready_time TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (customer_id) REFERENCES customers(id)
         );
@@ -226,6 +230,15 @@ async function createTables() {
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS delivery_zones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            price INTEGER DEFAULT 0,
+            is_active INTEGER DEFAULT 1,
+            sort_order INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
     `);
     
@@ -303,7 +316,11 @@ async function createMySQLTables() {
             comment TEXT,
             items JSON NOT NULL,
             total_amount DECIMAL(10, 2) DEFAULT 0,
+            zone_id INT NULL,
+            delivery_price INT DEFAULT 0,
+            zone_name VARCHAR(255) NULL,
             status VARCHAR(50) DEFAULT 'pending',
+            ready_time VARCHAR(10),
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             INDEX idx_customer (customer_id),
             INDEX idx_status (status),

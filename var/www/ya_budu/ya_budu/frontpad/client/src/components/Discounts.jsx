@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, Percent, Tag, X, Check, RefreshCw } from 'lucide-react';
 
-const API_URL = (process.env.REACT_APP_FONTPAD_API || 'http://localhost:3005') + '/api';
+// Используем относительный путь для работы через nginx
+const API_URL = (process.env.REACT_APP_FONTPAD_API || '') + '/api';
 
 function Discounts() {
   const [discounts, setDiscounts] = useState([]);
