@@ -263,11 +263,65 @@ const Products = () => {
             productId = editingProduct.id;
         }
         
-        // ✅ ЕДИНСТВЕННЫЙ РАБОЧИЙ СПОСОБ: Frontpad УДАЛЯЕТ ВСЕ РАЗМЕРЫ ПРИ ОБНОВЛЕНИИ ТОВАРА!
+        // ✅ НОРМАЛЬНЫЙ ПОРЯДОК СОХРАНЕНИЯ (теперь работает правильно!)
         let newSizesLocal = [...sizes];
         let newSizeAddonsLocal = {...sizeAddons};
         
-        // 1. СНАЧАЛА ОБНОВЛЯЕМ ТОВАР - Frontpad удалит все размеры на этом шаге
+        // 1. Сохраняем размеры
+        if (hasSizes && productId) {
+            // Получаем текущие размеры с сервера
+            const existingSizesRes = await axios.get(`/api/products/${productId}/sizes`);
+            const existingSizes = existingSizesRes.data || [];
+            
+            // Создаём карту существующих размеров по названию
+            const existingSizeMap = {};
+            existingSizes.forEach(s => existingSizeMap[s.name.trim().toLowerCase()] = s);
+            
+            const sizeIdMap = {};
+            
+            for (let i = 0; i < sizes.length; i++) {
+                const size = sizes[i];
+                const sizeKey = size.name.trim().toLowerCase();
+                
+                if (existingSizeMap[sizeKey]) {
+                    // Размер уже существует - обновляем цену
+                    await axios.put(`/api/sizes/${existingSizeMap[sizeKey].id}`, {
+                        name: size.name,
+                        price_modifier: size.price
+                    });
+                    newSizesLocal[i] = {
+                        ...size,
+                        id: existingSizeMap[sizeKey].id
+                    };
+                    sizeIdMap[size.id] = existingSizeMap[sizeKey].id;
+                } else {
+                    // Новый размер - создаём
+                    const response = await axios.post(`/api/products/${productId}/sizes`, {
+                        name: size.name,
+                        size_value: size.name,
+                        price_modifier: size.price
+                    });
+                    newSizesLocal[i] = {
+                        ...size,
+                        id: response.data.id
+                    };
+                    sizeIdMap[size.id] = response.data.id;
+                }
+            }
+            
+            // Обновляем ID размеров в sizeAddons
+            Object.entries(sizeAddons).forEach(([oldSizeId, addons]) => {
+                const newSizeId = sizeIdMap[oldSizeId];
+                if (newSizeId) {
+                    newSizeAddonsLocal[newSizeId] = addons;
+                }
+            });
+            
+            setSizes(newSizesLocal);
+            setSizeAddons(newSizeAddonsLocal);
+        }
+        
+        // 2. Обновляем товар
         if (editingProduct) {
             // Очищаем combo_items от лишних полей
             let comboItemsToSend = [];
@@ -298,41 +352,7 @@ const Products = () => {
             await axios.put(`${API_URL}/api/products/${editingProduct.id}`, cleanProductData);
         }
         
-        // ✅ Ждём 3 секунды пока Frontpad закончит удалять размеры в фоне
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        
-        // 2. ПОТОМ СОЗДАЁМ ВСЕ РАЗМЕРЫ ЗАНОВО!
-        if (hasSizes && productId) {
-            const sizeIdMap = {};
-            
-            for (let i = 0; i < sizes.length; i++) {
-                const size = sizes[i];
-                // Создаём размер заново
-                const response = await axios.post(`/api/products/${productId}/sizes`, {
-                    name: size.name,
-                    size_value: size.name,
-                    price_modifier: size.price
-                });
-                newSizesLocal[i] = {
-                    ...size,
-                    id: response.data.id
-                };
-                sizeIdMap[size.id] = response.data.id;
-            }
-            
-            // Обновляем ID размеров в sizeAddons
-            Object.entries(sizeAddons).forEach(([oldSizeId, addons]) => {
-                const newSizeId = sizeIdMap[oldSizeId];
-                if (newSizeId) {
-                    newSizeAddonsLocal[newSizeId] = addons;
-                }
-            });
-            
-            setSizes(newSizesLocal);
-            setSizeAddons(newSizeAddonsLocal);
-        }
-        
-        // 2. Сохраняем все допы для размеров
+        // 3. Сохраняем допы для размеров
         if (editingProduct && hasSizes && productId) {
             for (const size of newSizesLocal) {
                 const sizeAddonList = newSizeAddonsLocal[size.id] || [];
@@ -351,87 +371,6 @@ const Products = () => {
                     }
                 }
             }
-        }
-        
-        // 3. Обновляем товар
-        if (editingProduct) {
-            // Очищаем combo_items от лишних полей
-            let comboItemsToSend = [];
-            if (isCombo && comboItems.length > 0) {
-                comboItemsToSend = comboItems.map(item => ({
-                    product_id: item.product_id,
-                    product_price: item.product_price || 0,
-                    quantity: item.quantity || 1,
-                    size_id: item.size_id || null,
-                    size_name: item.size_name || null
-                }));
-            } else if (editingProduct?.combo_items) {
-                try {
-                    comboItemsToSend = typeof editingProduct.combo_items === 'string'
-                        ? JSON.parse(editingProduct.combo_items)
-                        : (Array.isArray(editingProduct.combo_items) ? editingProduct.combo_items : []);
-                } catch (e) {
-                    comboItemsToSend = [];
-                }
-            }
-            
-            const cleanProductData = {
-                ...productData,
-                is_combo: isCombo,
-                combo_items: isCombo ? comboItemsToSend : []
-            };
-            
-            await axios.put(`${API_URL}/api/products/${editingProduct.id}`, cleanProductData);
-        }
-        
-        // 4. ✅ ГАРАНТИРОВАННО СОХРАНЯЕМ ДОПЫ С ПОВТОРНЫМИ ПОПЫТКАМИ
-        if (editingProduct && hasSizes && productId) {
-            // Функция которая пытается сохранить допы с повторными попытками
-            const saveSizeAddonsWithRetry = async () => {
-                for (let attempt = 0; attempt < 15; attempt++) {
-                    console.log(`[Сохранение допов] Попытка ${attempt + 1}/15`);
-                    
-                    let allSuccess = true;
-                    
-                    for (const size of newSizesLocal) {
-                        const sizeAddonList = newSizeAddonsLocal[size.id] || [];
-                        if (sizeAddonList.length === 0) continue;
-                        
-                        try {
-                            await axios.delete(`/api/products/${productId}/sizes/${size.id}/addons`);
-                        } catch (e) {}
-                        
-                        for (const addon of sizeAddonList) {
-                            try {
-                                await axios.post(`/api/sizes/${size.id}/addons`, {
-                                    addon_id: addon.addon_id || addon.id,
-                                    is_required: addon.is_required || 0,
-                                    price_modifier: addon.price_modifier || 0
-                                });
-                            } catch (e) {
-                                allSuccess = false;
-                                break;
-                            }
-                        }
-                        
-                        if (!allSuccess) break;
-                    }
-                    
-                    if (allSuccess) {
-                        console.log('[Сохранение допов] ВСЕ ДОПЫ УСПЕШНО СОХРАНЕНЫ!');
-                        return true;
-                    }
-                    
-                    // Ждём 1 секунду перед следующей попыткой
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                }
-                
-                console.error('[Сохранение допов] Не удалось сохранить допы после 15 попыток');
-                return false;
-            };
-            
-            // Запускаем сохранение допов в фоне
-            setTimeout(saveSizeAddonsWithRetry, 2000);
         }
         
         // Сохраняем скидку на товар

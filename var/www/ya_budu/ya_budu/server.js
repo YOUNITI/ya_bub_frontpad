@@ -673,13 +673,51 @@ app.post('/api/sizes/:sizeId/addons', authenticateToken, requireAdmin, async (re
   try {
     const syncToken = process.env.FRONTPAD_SYNC_TOKEN || '';
     
-    // ✅ НАСТОЯЩИЙ ФИКС БАГА: Ждём пока размер появится на Frontpad!
-    let sizeExists = false;
-    for (let attempt = 0; attempt < 10; attempt++) {
+    // ✅ ФИНАЛЬНЫЙ ФИКС: Повторяем запрос до 15 раз пока не получится!
+    for (let attempt = 0; attempt < 15; attempt++) {
       try {
-        const checkResponse = await fetch(`${FRONTPAD_URL}/api/sizes/${sizeId}`, {
-          headers: { 'X-Frontpad-Token': syncToken }
+        const response = await fetch(`${FRONTPAD_URL}/api/sizes/${sizeId}/addons`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Frontpad-Token': syncToken
+          },
+          body: JSON.stringify({
+            addon_id,
+            is_required,
+            price_modifier
+          })
         });
+        
+        if (response.ok) {
+          const result = await response.json();
+          return res.json(result);
+        }
+        
+        // Если ошибка внешнего ключа - ждём и пробуем снова
+        const error = await response.text();
+        if (error.includes('foreign key') || error.includes('Cannot add or update a child row')) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          continue;
+        }
+        
+        // Другая ошибка - возвращаем сразу
+        console.error('Ошибка добавления допа размера на Frontpad:', error);
+        return res.status(response.status).json({ error: 'Ошибка добавления допа размера' });
+        
+      } catch (e) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    
+    // После 15 попыток всё равно не получилось
+    return res.status(500).json({ error: 'Не удалось сохранить доп после 15 попыток' });
+    
+  } catch (err) {
+    console.error('Ошибка добавления допа размера:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
         if (checkResponse.ok) {
           sizeExists = true;
           break;
