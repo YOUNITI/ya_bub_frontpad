@@ -1318,6 +1318,39 @@ app.post('/api/sizes/:sizeId/addons', async (req, res) => {
   }
 });
 
+// ✅ НОВЫЙ ENDPOINT: Обработка дополнений для размера
+app.post('/api/products/:productId/sizes/:sizeId/addons', async (req, res) => {
+  try {
+    const { productId, sizeId } = req.params;
+    const addons = req.body;
+
+    // Проверяем, существует ли размер
+    const size = await db.get('SELECT id FROM sizes WHERE id = ?', [sizeId]);
+    if (!size) {
+      return res.status(400).json({ 
+        error: 'Размер не найден', 
+        message: 'Невозможно добавить дополнение: указанный размер не существует в базе данных' 
+      });
+    }
+
+    // Удаляем старые дополнения для этого размера
+    await db.run('DELETE FROM size_addons WHERE size_id = ?', [sizeId]);
+
+    // Добавляем новые дополнения
+    for (const addon of addons) {
+      await db.run(`
+        INSERT INTO size_addons (size_id, addon_name, addon_price) 
+        VALUES (?, ?, ?)
+      `, [sizeId, addon.name, addon.price]);
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Ошибка при добавлении дополнений:', error);
+    res.status(500).json({ error: 'Ошибка сервера при добавлении дополнений' });
+  }
+});
+
 // ============ SETTINGS ============
 
 app.get('/api/settings', async (req, res) => {
