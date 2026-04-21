@@ -718,50 +718,6 @@ app.post('/api/sizes/:sizeId/addons', authenticateToken, requireAdmin, async (re
     res.status(500).json({ error: err.message });
   }
 });
-        if (checkResponse.ok) {
-          sizeExists = true;
-          break;
-        }
-      } catch (e) {}
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-    
-    if (!sizeExists) {
-      return res.status(404).json({ error: 'Размер не существует на Frontpad' });
-    }
-    
-    // Теперь можно безопасно добавить доп
-    const response = await fetch(`${FRONTPAD_URL}/api/sizes/${sizeId}/addons`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Frontpad-Token': syncToken
-      },
-      body: JSON.stringify({
-        addon_id,
-        is_required,
-        price_modifier
-      })
-    });
-    
-    if (response.ok) {
-      const result = await response.json();
-      res.json(result);
-    } else {
-      const error = await response.text();
-      // ✅ ИГНОРИРУЕМ ОШИБКУ ВНЕШНЕГО КЛЮЧА - это баг Frontpad
-      if (error.includes('foreign key') || error.includes('Cannot add or update a child row')) {
-        res.json({ success: true, ignored: true });
-      } else {
-        console.error('Ошибка добавления допа размера на Frontpad:', error);
-        res.status(response.status).json({ error: 'Ошибка добавления допа размера' });
-      }
-    }
-  } catch (err) {
-    console.error('Ошибка добавления допа размера:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // Дополнительные ингредиенты (допы)
 app.get('/api/products/:productId/addons', async (req, res) => {

@@ -1299,12 +1299,21 @@ app.delete('/api/products/:productId/sizes/:sizeId/addons', async (req, res) => 
 app.post('/api/sizes/:sizeId/addons', async (req, res) => {
   const { addon_id, is_required, price_modifier } = req.body;
   try {
+    // ✅ ПРОВЕРКА: Сначала проверяем что размер действительно существует!
+    const size = await db.get('SELECT id FROM sizes WHERE id = ?', [req.params.sizeId]);
+    if (!size) {
+      return res.status(404).json({ error: 'Размер не найден' });
+    }
+    
     const result = await db.run(
       'INSERT INTO size_addons (size_id, addon_id, is_required, price_modifier, sort_order) VALUES (?, ?, ?, ?, ?)',
       [req.params.sizeId, addon_id, is_required ? 1 : 0, price_modifier || 0, 0]
     );
     res.json({ id: result.lastID, size_id: req.params.sizeId, addon_id, is_required, price_modifier, sort_order: 0 });
   } catch (err) {
+    if (err.message.includes('foreign key')) {
+      return res.status(404).json({ error: 'Размер не найден' });
+    }
     res.status(500).json({ error: err.message });
   }
 });
