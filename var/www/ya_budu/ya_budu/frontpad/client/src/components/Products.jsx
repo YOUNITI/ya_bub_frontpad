@@ -30,8 +30,9 @@ if (typeof document !== 'undefined') {
 
 // Используем относительный путь для работы через nginx
 const API_URL = process.env.REACT_APP_FONTPAD_API || '';
-// Локальный сервер для операций с размерами и допами
-const LOCAL_API_BASE = '';
+// Локальный сервер для операций с размерами и допами - используем полный URL
+const LOCAL_API_BASE = 'http://localhost:3001';
+console.log('[INIT] LOCAL_API_BASE:', LOCAL_API_BASE);
 const IMAGE_BASE_URL = process.env.REACT_APP_IMAGE_BASE_URL || '';
 
 // Создаём axios инстанс с таймаутом
@@ -203,7 +204,9 @@ const Products = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
+    alert('🧪 ТЕСТ: Новая версия кода загружена! LOCAL_API_BASE = ' + LOCAL_API_BASE + '\nВремя: ' + new Date().toISOString());
+
     if (isSubmitting) return; // ✅ Защита от двойной отправки
     setIsSubmitting(true);
     
@@ -361,8 +364,24 @@ const Products = () => {
                 if (sizeAddonList.length > 0) {
                     try {
                         // Используем новый endpoint через локальный сервер с проверкой размера
-                        console.log('[CLIENT] Отправка допов на локальный сервер:', size.id, sizeAddonList);
-                        await axios.post(`${LOCAL_API_BASE}/api/products/${productId}/sizes/${size.id}/addons?t=${Date.now()}`, sizeAddonList);
+                        const addonUrl = `${LOCAL_API_BASE}/api/products/${productId}/sizes/${size.id}/addons?t=${Date.now()}&v=${Math.random()}`;
+                        console.log('[CLIENT] Отправка допов на локальный сервер:', addonUrl, sizeAddonList);
+                        console.log('[CLIENT] LOCAL_API_BASE:', LOCAL_API_BASE);
+                        console.log('[CLIENT] productId:', productId, 'sizeId:', size.id);
+
+                        try {
+                            const response = await axios.post(addonUrl, sizeAddonList, {
+                                headers: {
+                                    'Cache-Control': 'no-cache',
+                                    'Pragma': 'no-cache'
+                                }
+                            });
+                            console.log('[CLIENT] Ответ от сервера:', response.status, response.data);
+                        } catch (error) {
+                            console.error('[CLIENT] Ошибка запроса:', error.message);
+                            console.error('[CLIENT] URL:', addonUrl);
+                            console.error('[CLIENT] Данные:', sizeAddonList);
+                        }
                         console.log('[CLIENT] Допы отправлены успешно');
                     } catch (e) {
                         console.error('Ошибка сохранения допа размера:', e.message);
