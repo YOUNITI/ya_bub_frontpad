@@ -617,28 +617,6 @@ app.post('/api/products/:productId/sizes', authenticateToken, requireAdmin, asyn
   }
 });
 
-app.put('/api/sizes/:id', authenticateToken, requireAdmin, async (req, res) => {
-  const { id } = req.params;
-  const { name, price_modifier, sort_order } = req.body;
-  try {
-    await run('UPDATE sizes SET name = ?, price_modifier = ?, sort_order = ? WHERE id = ?', [name, price_modifier || 0, sort_order || 0, id]);
-    const size = await get('SELECT * FROM sizes WHERE id = ?', [id]);
-    res.json(size);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.delete('/api/sizes/:id', authenticateToken, requireAdmin, async (req, res) => {
-  const { id } = req.params;
-  try {
-    await run('DELETE FROM sizes WHERE id = ?', [id]);
-    res.json({ message: 'Размер удален' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // Дополнительные ингредиенты для размеров (size-addons)
 app.delete('/api/products/:productId/sizes/:sizeId/addons', authenticateToken, requireAdmin, async (req, res) => {
   const { productId, sizeId } = req.params;
@@ -668,53 +646,55 @@ app.delete('/api/products/:productId/sizes/:sizeId/addons', authenticateToken, r
 
 app.post('/api/sizes/:sizeId/addons', authenticateToken, requireAdmin, async (req, res) => {
   const { sizeId } = req.params;
-  const { addon_id, is_required, price_modifier } = req.body;
+  const { addon_id, is_required, price_modifier, sort_order } = req.body;
   
   try {
-    const syncToken = process.env.FRONTPAD_SYNC_TOKEN || '';
-    
-    // ✅ ФИНАЛЬНЫЙ ФИКС: Повторяем запрос до 15 раз пока не получится!
-    for (let attempt = 0; attempt < 15; attempt++) {
-      try {
-        const response = await fetch(`${FRONTPAD_URL}/api/sizes/${sizeId}/addons`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Frontpad-Token': syncToken
-          },
-          body: JSON.stringify({
-            addon_id,
-            is_required,
-            price_modifier
-          })
-        });
-        
-        if (response.ok) {
-          const result = await response.json();
-          return res.json(result);
-        }
-        
-        // Если ошибка внешнего ключа - ждём и пробуем снова
-        const error = await response.text();
-        if (error.includes('foreign key') || error.includes('Cannot add or update a child row')) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          continue;
-        }
-        
-        // Другая ошибка - возвращаем сразу
-        console.error('Ошибка добавления допа размера на Frontpad:', error);
-        return res.status(response.status).json({ error: 'Ошибка добавления допа размера' });
-        
-      } catch (e) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
+    // ✅ ПРОВЕРКА: Сначала проверяем что размер действительно существует!
+    const size = await get('SELECT id FROM sizes WHERE id = ?', [sizeId]);
+    if (!size) {
+      return res.status(404).json({ error: 'Размер не найден' });
     }
     
-    // После 15 попыток всё равно не получилось
-    return res.status(500).json({ error: 'Не удалось сохранить доп после 15 попыток' });
+    const result = await run(
+      'INSERT INTO size_addons (size_id, addon_id, is_required, price_modifier, sort_order) VALUES (?, ?, ?, ?, ?)',
+      [sizeId, addon_id, is_required || 0, price_modifier || 0, sort_order || 0]
+    );
     
+    res.json({ 
+      id: result.lastID, 
+      size_id: sizeId, 
+      addon_id, 
+      is_required: is_required || 0, 
+      price_modifier: price_modifier || 0,
+      message: 'Доп добавлен к размеру'
+    });
   } catch (err) {
-    console.error('Ошибка добавления допа размера:', err.message);
+    if (err.message.includes('foreign key')) {
+      return res.status(404).json({ error: 'Размер не найден' });
+    }
+    console.error('Error adding size-addon:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/sizes/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { name, price_modifier, sort_order } = req.body;
+  try {
+    await run('UPDATE sizes SET name = ?, price_modifier = ?, sort_order = ? WHERE id = ?', [name, price_modifier || 0, sort_order || 0, id]);
+    const size = await get('SELECT * FROM sizes WHERE id = ?', [id]);
+    res.json(size);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/sizes/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    await run('DELETE FROM sizes WHERE id = ?', [id]);
+    res.json({ message: 'Размер удален' });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

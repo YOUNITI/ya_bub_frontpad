@@ -30,9 +30,7 @@ if (typeof document !== 'undefined') {
 
 // Используем относительный путь для работы через nginx
 const API_URL = process.env.REACT_APP_FONTPAD_API || '';
-// Локальный сервер для операций с размерами и допами - используем полный URL
-const LOCAL_API_BASE = 'http://localhost:3001';
-console.log('[INIT] LOCAL_API_BASE:', LOCAL_API_BASE);
+console.log('[INIT] API_URL:', API_URL);
 const IMAGE_BASE_URL = process.env.REACT_APP_IMAGE_BASE_URL || '';
 
 // Создаём axios инстанс с таймаутом
@@ -205,8 +203,6 @@ const Products = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    alert('🧪 ТЕСТ: Новая версия кода загружена! LOCAL_API_BASE = ' + LOCAL_API_BASE + '\nВремя: ' + new Date().toISOString());
-
     if (isSubmitting) return; // ✅ Защита от двойной отправки
     setIsSubmitting(true);
     
@@ -272,7 +268,7 @@ const Products = () => {
         let newSizesLocal = [...sizes];
         let newSizeAddonsLocal = {...sizeAddons};
         
-        // 1. Сохраняем размеры
+        // 1. Сохраняем размеры - ВСЕГДА, даже при редактировании!
         if (hasSizes && productId) {
             // Получаем текущие размеры с сервера
             const existingSizesRes = await axios.get(`/api/products/${productId}/sizes`);
@@ -315,12 +311,24 @@ const Products = () => {
             }
             
             // Обновляем ID размеров в sizeAddons
+            console.log('[CLIENT] sizeAddons ДО замены ID:', sizeAddons);
+            console.log('[CLIENT] sizeIdMap:', sizeIdMap);
+            
             Object.entries(sizeAddons).forEach(([oldSizeId, addons]) => {
-                const newSizeId = sizeIdMap[oldSizeId];
+                const oldSizeIdNum = parseInt(oldSizeId);
+                const newSizeId = sizeIdMap[oldSizeIdNum];
+                console.log('[CLIENT] Заменяем ID:', oldSizeId, '(число:', oldSizeIdNum, ') на', newSizeId);
+                
                 if (newSizeId) {
                     newSizeAddonsLocal[newSizeId] = addons;
+                    // Удаляем старый ключ со временным ID
+                    delete newSizeAddonsLocal[oldSizeId];
+                    delete newSizeAddonsLocal[oldSizeIdNum];
+                    console.log('[CLIENT] Добавлены допы для нового ID', newSizeId, ':', addons);
                 }
             });
+            
+            console.log('[CLIENT] newSizeAddonsLocal ПОСЛЕ замены ID:', newSizeAddonsLocal);
             
             setSizes(newSizesLocal);
             setSizeAddons(newSizeAddonsLocal);
@@ -358,15 +366,20 @@ const Products = () => {
         }
         
         // 3. Сохраняем допы для размеров
-        if (editingProduct && hasSizes && productId) {
+        if (hasSizes && productId) {
+            console.log('[CLIENT] Сохраняем допы для размеров:');
+            console.log('[CLIENT] newSizesLocal:', newSizesLocal);
+            console.log('[CLIENT] newSizeAddonsLocal:', newSizeAddonsLocal);
+            
             for (const size of newSizesLocal) {
                 const sizeAddonList = newSizeAddonsLocal[size.id] || [];
+                console.log('[CLIENT] Размер:', size.id, size.name, 'допы:', sizeAddonList, 'количество:', sizeAddonList.length);
+                
                 if (sizeAddonList.length > 0) {
                     try {
                         // Используем новый endpoint через локальный сервер с проверкой размера
-                        const addonUrl = `${LOCAL_API_BASE}/api/products/${productId}/sizes/${size.id}/addons?t=${Date.now()}&v=${Math.random()}`;
+                        const addonUrl = `/api/products/${productId}/sizes/${size.id}/addons?t=${Date.now()}&v=${Math.random()}`;
                         console.log('[CLIENT] Отправка допов на локальный сервер:', addonUrl, sizeAddonList);
-                        console.log('[CLIENT] LOCAL_API_BASE:', LOCAL_API_BASE);
                         console.log('[CLIENT] productId:', productId, 'sizeId:', size.id);
 
                         try {
@@ -638,11 +651,16 @@ const Products = () => {
   const addSize = () => {
     if (!newSize.name.trim() || newSize.price === '') return;
     setSizes([...sizes, { ...newSize, id: Date.now(), price: parseFloat(newSize.price) }]);
+    setHasSizes(true); // ✅ Устанавливаем hasSizes = true когда добавляется размер
     setNewSize({ name: '', price: '' });
   };
 
   const removeSize = (id) => {
-    setSizes(sizes.filter(s => s.id !== id));
+    const newSizes = sizes.filter(s => s.id !== id);
+    setSizes(newSizes);
+    if (newSizes.length === 0) {
+      setHasSizes(false);
+    }
   };
 
   // Функции для допов
@@ -693,12 +711,11 @@ const Products = () => {
     
     const newSizeAddons = { ...sizeAddons };
     // Обновляем размеры с новым допом
-    const updatedSizeAddons = {...sizeAddons};
-    if (!updatedSizeAddons[selectedSizeForAddons]) {
-      updatedSizeAddons[selectedSizeForAddons] = [];
+    if (!newSizeAddons[selectedSizeForAddons]) {
+      newSizeAddons[selectedSizeForAddons] = [];
     }
 
-    updatedSizeAddons[selectedSizeForAddons].push({
+    newSizeAddons[selectedSizeForAddons].push({
       addon_id: addonTemplate.id,
       name: addonTemplate.name,
       price: addonTemplate.default_price || 0,
