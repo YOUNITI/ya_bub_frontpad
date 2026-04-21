@@ -1045,7 +1045,7 @@ app.post('/api/products/:productId/sizes', async (req, res) => {
     const { name, size_value, price } = req.body;
     try {
         // 🔍 ПРОВЕРКА:是否存在相同尺寸
-        const existing = await get(
+        const existing = await db.get(
             'SELECT * FROM sizes WHERE product_id = ? AND name = ? AND size_value = ?',
             [req.params.productId, name, size_value || name]
         );
@@ -1057,7 +1057,7 @@ app.post('/api/products/:productId/sizes', async (req, res) => {
             });
         }
         
-        const result = await run(
+        const result = await db.run(
             'INSERT INTO sizes (product_id, name, size_value, price) VALUES (?, ?, ?, ?)',
             [req.params.productId, name, size_value || name, price || 0]
         );

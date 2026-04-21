@@ -313,41 +313,72 @@ const Products = () => {
                     size_value: size.name,
                     price_modifier: size.price
                 });
+                const newId = response.data.id;
                 newSizesLocal[i] = {
                     ...size,
-                    id: response.data.id
+                    id: newId
                 };
-                sizeIdMap[size.id] = response.data.id;
+                // Используем индекс как ключ для маппинга, т.к. старый size.id может не существовать
+                sizeIdMap[i] = newId;
             }
             
-            // Обновляем ID размеров в sizeAddons
-            Object.entries(sizeAddons).forEach(([oldSizeId, addons]) => {
-                const newSizeId = sizeIdMap[oldSizeId];
+            // Обновляем ID размеров в sizeAddons - создаём новый объект с правильными ключами
+            // sizeAddons keyed by old size index or old size id, need to remap to new IDs
+            const remappedSizeAddons = {};
+            
+            // Пробуем два варианта ключей: по индексу и по старому ID
+            Object.entries(sizeAddons).forEach(([key, addons]) => {
+                let newSizeId = null;
+                // Если ключ - это индекс (число)
+                if (!isNaN(parseInt(key)) && sizeIdMap[parseInt(key)]) {
+                    newSizeId = sizeIdMap[parseInt(key)];
+                }
+                // Если ключ - это старый ID размера
+                else if (sizeIdMap[key]) {
+                    newSizeId = sizeIdMap[key];
+                }
+                
                 if (newSizeId) {
-                    newSizeAddonsLocal[newSizeId] = addons;
+                    remappedSizeAddons[newSizeId] = addons;
                 }
             });
             
             setSizes(newSizesLocal);
-            setSizeAddons(newSizeAddonsLocal);
+            setSizeAddons(remappedSizeAddons);
+            newSizeAddonsLocal = remappedSizeAddons;
         }
         
         // 2. Сохраняем все допы для размеров
         if (editingProduct && hasSizes && productId) {
             for (const size of newSizesLocal) {
                 const sizeAddonList = newSizeAddonsLocal[size.id] || [];
+                
+                // Проверяем, что размер действительно существует в базе перед сохранением допов
+                let sizeExists = false;
+                try {
+                    const sizeCheck = await axios.get(`/api/products/${productId}/sizes`);
+                    sizeExists = sizeCheck.data.some(s => s.id === size.id);
+                } catch (e) {
+                    console.error(`Ошибка проверки существования размера ${size.id}:`, e.message);
+                }
+                
+                if (!sizeExists) {
+                    console.error(`Размер ${size.id} не найден в базе, пропускаем допы`);
+                    continue;
+                }
+                
                 try {
                     await axios.delete(`/api/products/${productId}/sizes/${size.id}/addons`);
                 } catch (e) {}
                 for (const addon of sizeAddonList) {
                     try {
-                        await axios.post(`/api/sizes/${size.id}/addons`, {
-                            addon_id: addon.addon_id || addon.id,
-                            is_required: addon.is_required || 0,
-                            price_modifier: addon.price_modifier || 0
-                        });
+                        // Используем новый маршрут с productId
+                        await axios.post(`/api/products/${productId}/sizes/${size.id}/addons`, [{
+                            name: addon.name || addon.addon_name || 'Дополнение',
+                            price: addon.price || addon.addon_price || addon.price_modifier || 0
+                        }]);
                     } catch (e) {
-                        console.error('Ошибка сохранения допа размера:', e.message);
+                        console.error('Ошибка сохранения допа размера:', e.message, e.response?.data);
                     }
                 }
             }
@@ -397,18 +428,34 @@ const Products = () => {
                         const sizeAddonList = newSizeAddonsLocal[size.id] || [];
                         if (sizeAddonList.length === 0) continue;
                         
+                        // Проверяем существование размера перед каждой попыткой
+                        let sizeExists = false;
+                        try {
+                            const sizeCheck = await axios.get(`/api/products/${productId}/sizes`);
+                            sizeExists = sizeCheck.data.some(s => s.id === size.id);
+                        } catch (e) {
+                            console.error(`Ошибка проверки существования размера ${size.id}:`, e.message);
+                        }
+                        
+                        if (!sizeExists) {
+                            console.error(`Размер ${size.id} не найден в базе, пропускаем на этой попытке`);
+                            allSuccess = false;
+                            break;
+                        }
+                        
                         try {
                             await axios.delete(`/api/products/${productId}/sizes/${size.id}/addons`);
                         } catch (e) {}
                         
                         for (const addon of sizeAddonList) {
                             try {
-                                await axios.post(`/api/sizes/${size.id}/addons`, {
-                                    addon_id: addon.addon_id || addon.id,
-                                    is_required: addon.is_required || 0,
-                                    price_modifier: addon.price_modifier || 0
-                                });
+                                // Используем новый маршрут с productId
+                                await axios.post(`/api/products/${productId}/sizes/${size.id}/addons`, [{
+                                    name: addon.name || addon.addon_name || 'Дополнение',
+                                    price: addon.price || addon.addon_price || addon.price_modifier || 0
+                                }]);
                             } catch (e) {
+                                console.error(`Ошибка сохранения допа ${addon.addon_id || addon.id} к размеру ${size.id}:`, e.response?.data);
                                 allSuccess = false;
                                 break;
                             }
@@ -750,7 +797,7 @@ const Products = () => {
       is_required: addonIsRequired ? 1 : 0
     });
     
-    setSizeAddons(newSizeAddons);
+    setSizeAddons(updatedSizeAddons);
     setShowAddonSelectModal(false);
     setSelectedAddonTemplate(null);
     setAddonPriceModifier(0);
