@@ -30,6 +30,7 @@ if (typeof document !== 'undefined') {
 
 // Используем относительный путь для работы через nginx
 const API_URL = process.env.REACT_APP_FONTPAD_API || '';
+console.log('[INIT] API_URL:', API_URL);
 const IMAGE_BASE_URL = process.env.REACT_APP_IMAGE_BASE_URL || '';
 
 // Создаём axios инстанс с таймаутом
@@ -201,7 +202,7 @@ const Products = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     if (isSubmitting) return; // ✅ Защита от двойной отправки
     setIsSubmitting(true);
     
@@ -263,128 +264,78 @@ const Products = () => {
             productId = editingProduct.id;
         }
         
-        // ✅ ЕДИНСТВЕННЫЙ РАБОЧИЙ СПОСОБ: Frontpad УДАЛЯЕТ ВСЕ РАЗМЕРЫ ПРИ ОБНОВЛЕНИИ ТОВАРА!
+        // ✅ НОРМАЛЬНЫЙ ПОРЯДОК СОХРАНЕНИЯ (теперь работает правильно!)
         let newSizesLocal = [...sizes];
         let newSizeAddonsLocal = {...sizeAddons};
         
-        // 1. СНАЧАЛА ОБНОВЛЯЕМ ТОВАР - Frontpad удалит все размеры на этом шаге
-        if (editingProduct) {
-            // Очищаем combo_items от лишних полей
-            let comboItemsToSend = [];
-            if (isCombo && comboItems.length > 0) {
-                comboItemsToSend = comboItems.map(item => ({
-                    product_id: item.product_id,
-                    product_price: item.product_price || 0,
-                    quantity: item.quantity || 1,
-                    size_id: item.size_id || null,
-                    size_name: item.size_name || null
-                }));
-            } else if (editingProduct?.combo_items) {
-                try {
-                    comboItemsToSend = typeof editingProduct.combo_items === 'string'
-                        ? JSON.parse(editingProduct.combo_items)
-                        : (Array.isArray(editingProduct.combo_items) ? editingProduct.combo_items : []);
-                } catch (e) {
-                    comboItemsToSend = [];
-                }
-            }
-            
-            const cleanProductData = {
-                ...productData,
-                is_combo: isCombo,
-                combo_items: isCombo ? comboItemsToSend : []
-            };
-            
-            await axios.put(`${API_URL}/api/products/${editingProduct.id}`, cleanProductData);
-        }
-        
-        // ✅ Ждём 3 секунды пока Frontpad закончит удалять размеры в фоне
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        
-        // 2. ПОТОМ СОЗДАЁМ ВСЕ РАЗМЕРЫ ЗАНОВО!
+        // 1. Сохраняем размеры - ВСЕГДА, даже при редактировании!
         if (hasSizes && productId) {
+            // Получаем текущие размеры с сервера
+            const existingSizesRes = await axios.get(`/api/products/${productId}/sizes`);
+            const existingSizes = existingSizesRes.data || [];
+            
+            // Создаём карту существующих размеров по названию
+            const existingSizeMap = {};
+            existingSizes.forEach(s => existingSizeMap[s.name.trim().toLowerCase()] = s);
+            
             const sizeIdMap = {};
             
             for (let i = 0; i < sizes.length; i++) {
                 const size = sizes[i];
-                // Создаём размер заново
-                const response = await axios.post(`/api/products/${productId}/sizes`, {
-                    name: size.name,
-                    size_value: size.name,
-                    price_modifier: size.price
-                });
-                const newId = response.data.id;
-                newSizesLocal[i] = {
-                    ...size,
-                    id: newId
-                };
-                // Используем индекс как ключ для маппинга, т.к. старый size.id может не существовать
-                sizeIdMap[i] = newId;
+                const sizeKey = size.name.trim().toLowerCase();
+                
+                if (existingSizeMap[sizeKey]) {
+                    // Размер уже существует - обновляем цену
+                    await axios.put(`/api/sizes/${existingSizeMap[sizeKey].id}`, {
+                        name: size.name,
+                        price_modifier: size.price
+                    });
+                    newSizesLocal[i] = {
+                        ...size,
+                        id: existingSizeMap[sizeKey].id
+                    };
+                    sizeIdMap[size.id] = existingSizeMap[sizeKey].id;
+                } else {
+                    // Новый размер - создаём
+                    const response = await axios.post(`/api/products/${productId}/sizes`, {
+                        name: size.name,
+                        size_value: size.name,
+                        price_modifier: size.price
+                    });
+                    newSizesLocal[i] = {
+                        ...size,
+                        id: response.data.id
+                    };
+                    sizeIdMap[size.id] = response.data.id;
+                }
             }
             
-            // Обновляем ID размеров в sizeAddons - создаём новый объект с правильными ключами
-            // sizeAddons keyed by old size index or old size id, need to remap to new IDs
-            const remappedSizeAddons = {};
+            // Обновляем ID размеров в sizeAddons
+            console.log('[CLIENT] sizeAddons ДО замены ID:', sizeAddons);
+            console.log('[CLIENT] sizeIdMap:', sizeIdMap);
             
-            // Пробуем два варианта ключей: по индексу и по старому ID
-            Object.entries(sizeAddons).forEach(([key, addons]) => {
-                let newSizeId = null;
-                // Если ключ - это индекс (число)
-                if (!isNaN(parseInt(key)) && sizeIdMap[parseInt(key)]) {
-                    newSizeId = sizeIdMap[parseInt(key)];
-                }
-                // Если ключ - это старый ID размера
-                else if (sizeIdMap[key]) {
-                    newSizeId = sizeIdMap[key];
-                }
+            Object.entries(sizeAddons).forEach(([oldSizeId, addons]) => {
+                const oldSizeIdNum = parseInt(oldSizeId);
+                const newSizeId = sizeIdMap[oldSizeIdNum];
+                console.log('[CLIENT] Заменяем ID:', oldSizeId, '(число:', oldSizeIdNum, ') на', newSizeId);
                 
                 if (newSizeId) {
-                    remappedSizeAddons[newSizeId] = addons;
+                    newSizeAddonsLocal[newSizeId] = addons;
+                    // Удаляем старый ключ со временным ID
+                    delete newSizeAddonsLocal[oldSizeId];
+                    delete newSizeAddonsLocal[oldSizeIdNum];
+                    console.log('[CLIENT] Добавлены допы для нового ID', newSizeId, ':', addons);
                 }
             });
+            
+            console.log('[CLIENT] newSizeAddonsLocal ПОСЛЕ замены ID:', newSizeAddonsLocal);
             
             setSizes(newSizesLocal);
             setSizeAddons(remappedSizeAddons);
             newSizeAddonsLocal = remappedSizeAddons;
         }
         
-        // 2. Сохраняем все допы для размеров
-        if (editingProduct && hasSizes && productId) {
-            for (const size of newSizesLocal) {
-                const sizeAddonList = newSizeAddonsLocal[size.id] || [];
-                
-                // Проверяем, что размер действительно существует в базе перед сохранением допов
-                let sizeExists = false;
-                try {
-                    const sizeCheck = await axios.get(`/api/products/${productId}/sizes`);
-                    sizeExists = sizeCheck.data.some(s => s.id === size.id);
-                } catch (e) {
-                    console.error(`Ошибка проверки существования размера ${size.id}:`, e.message);
-                }
-                
-                if (!sizeExists) {
-                    console.error(`Размер ${size.id} не найден в базе, пропускаем допы`);
-                    continue;
-                }
-                
-                try {
-                    await axios.delete(`/api/products/${productId}/sizes/${size.id}/addons`);
-                } catch (e) {}
-                for (const addon of sizeAddonList) {
-                    try {
-                        // Используем новый маршрут с productId
-                        await axios.post(`/api/products/${productId}/sizes/${size.id}/addons`, [{
-                            name: addon.name || addon.addon_name || 'Дополнение',
-                            price: addon.price || addon.addon_price || addon.price_modifier || 0
-                        }]);
-                    } catch (e) {
-                        console.error('Ошибка сохранения допа размера:', e.message, e.response?.data);
-                    }
-                }
-            }
-        }
-        
-        // 3. Обновляем товар
+        // 2. Обновляем товар
         if (editingProduct) {
             // Очищаем combo_items от лишних полей
             let comboItemsToSend = [];
@@ -415,70 +366,42 @@ const Products = () => {
             await axios.put(`${API_URL}/api/products/${editingProduct.id}`, cleanProductData);
         }
         
-        // 4. ✅ ГАРАНТИРОВАННО СОХРАНЯЕМ ДОПЫ С ПОВТОРНЫМИ ПОПЫТКАМИ
-        if (editingProduct && hasSizes && productId) {
-            // Функция которая пытается сохранить допы с повторными попытками
-            const saveSizeAddonsWithRetry = async () => {
-                for (let attempt = 0; attempt < 15; attempt++) {
-                    console.log(`[Сохранение допов] Попытка ${attempt + 1}/15`);
-                    
-                    let allSuccess = true;
-                    
-                    for (const size of newSizesLocal) {
-                        const sizeAddonList = newSizeAddonsLocal[size.id] || [];
-                        if (sizeAddonList.length === 0) continue;
-                        
-                        // Проверяем существование размера перед каждой попыткой
-                        let sizeExists = false;
-                        try {
-                            const sizeCheck = await axios.get(`/api/products/${productId}/sizes`);
-                            sizeExists = sizeCheck.data.some(s => s.id === size.id);
-                        } catch (e) {
-                            console.error(`Ошибка проверки существования размера ${size.id}:`, e.message);
-                        }
-                        
-                        if (!sizeExists) {
-                            console.error(`Размер ${size.id} не найден в базе, пропускаем на этой попытке`);
-                            allSuccess = false;
-                            break;
-                        }
-                        
-                        try {
-                            await axios.delete(`/api/products/${productId}/sizes/${size.id}/addons`);
-                        } catch (e) {}
-                        
-                        for (const addon of sizeAddonList) {
-                            try {
-                                // Используем новый маршрут с productId
-                                await axios.post(`/api/products/${productId}/sizes/${size.id}/addons`, [{
-                                    name: addon.name || addon.addon_name || 'Дополнение',
-                                    price: addon.price || addon.addon_price || addon.price_modifier || 0
-                                }]);
-                            } catch (e) {
-                                console.error(`Ошибка сохранения допа ${addon.addon_id || addon.id} к размеру ${size.id}:`, e.response?.data);
-                                allSuccess = false;
-                                break;
-                            }
-                        }
-                        
-                        if (!allSuccess) break;
-                    }
-                    
-                    if (allSuccess) {
-                        console.log('[Сохранение допов] ВСЕ ДОПЫ УСПЕШНО СОХРАНЕНЫ!');
-                        return true;
-                    }
-                    
-                    // Ждём 1 секунду перед следующей попыткой
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                }
-                
-                console.error('[Сохранение допов] Не удалось сохранить допы после 15 попыток');
-                return false;
-            };
+        // 3. Сохраняем допы для размеров
+        if (hasSizes && productId) {
+            console.log('[CLIENT] Сохраняем допы для размеров:');
+            console.log('[CLIENT] newSizesLocal:', newSizesLocal);
+            console.log('[CLIENT] newSizeAddonsLocal:', newSizeAddonsLocal);
             
-            // Запускаем сохранение допов в фоне
-            setTimeout(saveSizeAddonsWithRetry, 2000);
+            for (const size of newSizesLocal) {
+                const sizeAddonList = newSizeAddonsLocal[size.id] || [];
+                console.log('[CLIENT] Размер:', size.id, size.name, 'допы:', sizeAddonList, 'количество:', sizeAddonList.length);
+                
+                if (sizeAddonList.length > 0) {
+                    try {
+                        // Используем новый endpoint через локальный сервер с проверкой размера
+                        const addonUrl = `/api/products/${productId}/sizes/${size.id}/addons?t=${Date.now()}&v=${Math.random()}`;
+                        console.log('[CLIENT] Отправка допов на локальный сервер:', addonUrl, sizeAddonList);
+                        console.log('[CLIENT] productId:', productId, 'sizeId:', size.id);
+
+                        try {
+                            const response = await axios.post(addonUrl, sizeAddonList, {
+                                headers: {
+                                    'Cache-Control': 'no-cache',
+                                    'Pragma': 'no-cache'
+                                }
+                            });
+                            console.log('[CLIENT] Ответ от сервера:', response.status, response.data);
+                        } catch (error) {
+                            console.error('[CLIENT] Ошибка запроса:', error.message);
+                            console.error('[CLIENT] URL:', addonUrl);
+                            console.error('[CLIENT] Данные:', sizeAddonList);
+                        }
+                        console.log('[CLIENT] Допы отправлены успешно');
+                    } catch (e) {
+                        console.error('Ошибка сохранения допа размера:', e.message);
+                    }
+                }
+            }
         }
         
         // Сохраняем скидку на товар
@@ -729,11 +652,16 @@ const Products = () => {
   const addSize = () => {
     if (!newSize.name.trim() || newSize.price === '') return;
     setSizes([...sizes, { ...newSize, id: Date.now(), price: parseFloat(newSize.price) }]);
+    setHasSizes(true); // ✅ Устанавливаем hasSizes = true когда добавляется размер
     setNewSize({ name: '', price: '' });
   };
 
   const removeSize = (id) => {
-    setSizes(sizes.filter(s => s.id !== id));
+    const newSizes = sizes.filter(s => s.id !== id);
+    setSizes(newSizes);
+    if (newSizes.length === 0) {
+      setHasSizes(false);
+    }
   };
 
   // Функции для допов
@@ -784,12 +712,11 @@ const Products = () => {
     
     const newSizeAddons = { ...sizeAddons };
     // Обновляем размеры с новым допом
-    const updatedSizeAddons = {...sizeAddons};
-    if (!updatedSizeAddons[selectedSizeForAddons]) {
-      updatedSizeAddons[selectedSizeForAddons] = [];
+    if (!newSizeAddons[selectedSizeForAddons]) {
+      newSizeAddons[selectedSizeForAddons] = [];
     }
 
-    updatedSizeAddons[selectedSizeForAddons].push({
+    newSizeAddons[selectedSizeForAddons].push({
       addon_id: addonTemplate.id,
       name: addonTemplate.name,
       price: addonTemplate.default_price || 0,

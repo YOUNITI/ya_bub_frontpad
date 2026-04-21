@@ -3018,13 +3018,10 @@ app.post('/api/sizes/:sizeId/addons', async (req, res) => {
     const { sizeId } = req.params;
     const { addon_id, is_required, price_modifier, sort_order } = req.body;
     
-    // Проверяем, существует ли размер
+    // ✅ ПРОВЕРКА: Сначала проверяем что размер действительно существует!
     const size = await get('SELECT id FROM sizes WHERE id = ?', [sizeId]);
     if (!size) {
-      return res.status(400).json({ 
-        error: 'Размер не найден', 
-        message: 'Невозможно добавить дополнение: указанный размер не существует в базе данных' 
-      });
+      return res.status(404).json({ error: 'Размер не найден' });
     }
     
     const result = await run(
@@ -3041,6 +3038,9 @@ app.post('/api/sizes/:sizeId/addons', async (req, res) => {
       message: 'Доп добавлен к размеру'
     });
   } catch (err) {
+    if (err.message.includes('foreign key')) {
+      return res.status(404).json({ error: 'Размер не найден' });
+    }
     console.error('Error adding size-addon:', err.message);
     res.status(500).json({ error: err.message });
   }

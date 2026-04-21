@@ -26,6 +26,46 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// ✅ ЕДИНСТВЕННЫЙ ENDPOINT ДЛЯ ДОПОВ К РАЗМЕРАМ
+app.post('/api/sizes/:sizeId/addons', async (req, res) => {
+  try {
+    const { sizeId } = req.params;
+    const { addon_id, is_required, price_modifier, sort_order } = req.body;
+    
+    // ✅ ПРОВЕРКА: Сначала проверяем что размер действительно существует!
+    const size = await db.get('SELECT id FROM sizes WHERE id = ?', [sizeId]);
+    if (!size) {
+      console.log('[ENDPOINT] Размер не найден:', sizeId);
+      return res.status(404).json({ error: 'Размер не найден' });
+    }
+    
+    console.log('[ENDPOINT] Добавляем доп к размеру:', sizeId, 'доп:', addon_id);
+    
+    const result = await db.run(
+      'INSERT INTO size_addons (size_id, addon_id, is_required, price_modifier, sort_order) VALUES (?, ?, ?, ?, ?)',
+      [sizeId, addon_id, is_required || 0, price_modifier || 0, sort_order || 0]
+    );
+    
+    console.log('[ENDPOINT] Доп добавлен успешно, ID:', result.lastID);
+    
+    res.json({ 
+      id: result.lastID, 
+      size_id: sizeId, 
+      addon_id, 
+      is_required: is_required || 0, 
+      price_modifier: price_modifier || 0,
+      message: 'Доп добавлен к размеру'
+    });
+  } catch (err) {
+    if (err.message.includes('foreign key')) {
+      console.log('[ENDPOINT] Ошибка внешнего ключа:', err.message);
+      return res.status(404).json({ error: 'Размер не найден' });
+    }
+    console.error('[ENDPOINT] Ошибка добавления допа:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Настройка multer для загрузки файлов
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage, limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB limit
@@ -1295,19 +1335,58 @@ app.delete('/api/products/:productId/sizes/:sizeId/addons', async (req, res) => 
   }
 });
 
-// POST /api/sizes/:sizeId/addons -> добавить доп к размеру (алиас для /api/sizes/:sizeId/size-addons)
-app.post('/api/sizes/:sizeId/addons', async (req, res) => {
-  const { addon_id, is_required, price_modifier } = req.body;
+
+
+ // ✅ НОВЫЙ ENDPOINT: Обработка дополнений для размера
+app.post('/api/products/:productId/sizes/:sizeId/addons', async (req, res) => {
   try {
-    const result = await db.run(
-      'INSERT INTO size_addons (size_id, addon_id, is_required, price_modifier, sort_order) VALUES (?, ?, ?, ?, ?)',
-      [req.params.sizeId, addon_id, is_required ? 1 : 0, price_modifier || 0, 0]
-    );
-    res.json({ id: result.lastID, size_id: req.params.sizeId, addon_id, is_required, price_modifier, sort_order: 0 });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    const { productId, sizeId } = req.params;
+    const addons = req.body;
+
+    console.log('[FRONTPAD] Запрос на добавление допов для размера:', sizeId, 'товар:', productId);
+    console.log('[FRONTPAD] Допы из запроса:', addons);
+    console.log('[FRONTPAD] Количество допов:', addons ? addons.length : 0);
+
+    // Проверяем, существует ли размер
+    const size = await db.get('SELECT id FROM sizes WHERE id = ?', [sizeId]);
+    if (!size) {
+      console.log('[FRONTPAD] Размер не найден:', sizeId);
+      return res.status(400).json({
+        error: 'Размер не найден',
+        message: 'Невозможно добавить дополнение: указанный размер не существует в базе данных'
+      });
+    }
+
+    console.log('[FRONTPAD] Размер найден, добавляем допы...');
+
+    // Удаляем старые дополнения для этого размера
+    await db.run('DELETE FROM size_addons WHERE size_id = ?', [sizeId]);
+
+    // Добавляем новые дополнения
+    if (addons && Array.isArray(addons) && addons.length > 0) {
+      console.log('[FRONTPAD] Добавляем', addons.length, 'допов');
+      for (const addon of addons) {
+        console.log('[FRONTPAD] Добавляем доп:', addon);
+        await db.run(`
+          INSERT INTO size_addons (size_id, addon_id, price_modifier, is_required)
+          VALUES (?, ?, ?, ?)
+        `, [sizeId, addon.addon_id, addon.price_modifier || 0, addon.is_required || 0]);
+      }
+    } else {
+      console.log('[FRONTPAD] Нет допов для добавления');
+    }
+
+    console.log('[FRONTPAD] Допы успешно добавлены');
+    res.json({ success: true, addons_added: addons ? addons.length : 0 });
+  } catch (error) {
+    console.error('[FRONTPAD] Ошибка при добавлении дополнений:', error);
+    res.status(500).json({ error: 'Ошибка сервера при добавлении дополнений' });
   }
 });
+
+
+
+
 
 // ============ SETTINGS ============
 

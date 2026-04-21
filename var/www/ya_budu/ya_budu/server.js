@@ -617,28 +617,6 @@ app.post('/api/products/:productId/sizes', authenticateToken, requireAdmin, asyn
   }
 });
 
-app.put('/api/sizes/:id', authenticateToken, requireAdmin, async (req, res) => {
-  const { id } = req.params;
-  const { name, price_modifier, sort_order } = req.body;
-  try {
-    await run('UPDATE sizes SET name = ?, price_modifier = ?, sort_order = ? WHERE id = ?', [name, price_modifier || 0, sort_order || 0, id]);
-    const size = await get('SELECT * FROM sizes WHERE id = ?', [id]);
-    res.json(size);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.delete('/api/sizes/:id', authenticateToken, requireAdmin, async (req, res) => {
-  const { id } = req.params;
-  try {
-    await run('DELETE FROM sizes WHERE id = ?', [id]);
-    res.json({ message: 'Размер удален' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // Дополнительные ингредиенты для размеров (size-addons)
 app.delete('/api/products/:productId/sizes/:sizeId/addons', authenticateToken, requireAdmin, async (req, res) => {
   const { productId, sizeId } = req.params;
@@ -668,59 +646,55 @@ app.delete('/api/products/:productId/sizes/:sizeId/addons', authenticateToken, r
 
 app.post('/api/sizes/:sizeId/addons', authenticateToken, requireAdmin, async (req, res) => {
   const { sizeId } = req.params;
-  const { addon_id, is_required, price_modifier } = req.body;
+  const { addon_id, is_required, price_modifier, sort_order } = req.body;
   
   try {
-    const syncToken = process.env.FRONTPAD_SYNC_TOKEN || '';
-    
-    // ✅ НАСТОЯЩИЙ ФИКС БАГА: Ждём пока размер появится на Frontpad!
-    let sizeExists = false;
-    for (let attempt = 0; attempt < 10; attempt++) {
-      try {
-        const checkResponse = await fetch(`${FRONTPAD_URL}/api/sizes/${sizeId}`, {
-          headers: { 'X-Frontpad-Token': syncToken }
-        });
-        if (checkResponse.ok) {
-          sizeExists = true;
-          break;
-        }
-      } catch (e) {}
-      await new Promise(resolve => setTimeout(resolve, 500));
+    // ✅ ПРОВЕРКА: Сначала проверяем что размер действительно существует!
+    const size = await get('SELECT id FROM sizes WHERE id = ?', [sizeId]);
+    if (!size) {
+      return res.status(404).json({ error: 'Размер не найден' });
     }
     
-    if (!sizeExists) {
-      return res.status(404).json({ error: 'Размер не существует на Frontpad' });
-    }
+    const result = await run(
+      'INSERT INTO size_addons (size_id, addon_id, is_required, price_modifier, sort_order) VALUES (?, ?, ?, ?, ?)',
+      [sizeId, addon_id, is_required || 0, price_modifier || 0, sort_order || 0]
+    );
     
-    // Теперь можно безопасно добавить доп
-    const response = await fetch(`${FRONTPAD_URL}/api/sizes/${sizeId}/addons`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Frontpad-Token': syncToken
-      },
-      body: JSON.stringify({
-        addon_id,
-        is_required,
-        price_modifier
-      })
+    res.json({ 
+      id: result.lastID, 
+      size_id: sizeId, 
+      addon_id, 
+      is_required: is_required || 0, 
+      price_modifier: price_modifier || 0,
+      message: 'Доп добавлен к размеру'
     });
-    
-    if (response.ok) {
-      const result = await response.json();
-      res.json(result);
-    } else {
-      const error = await response.text();
-      // ✅ ИГНОРИРУЕМ ОШИБКУ ВНЕШНЕГО КЛЮЧА - это баг Frontpad
-      if (error.includes('foreign key') || error.includes('Cannot add or update a child row')) {
-        res.json({ success: true, ignored: true });
-      } else {
-        console.error('Ошибка добавления допа размера на Frontpad:', error);
-        res.status(response.status).json({ error: 'Ошибка добавления допа размера' });
-      }
-    }
   } catch (err) {
-    console.error('Ошибка добавления допа размера:', err.message);
+    if (err.message.includes('foreign key')) {
+      return res.status(404).json({ error: 'Размер не найден' });
+    }
+    console.error('Error adding size-addon:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/sizes/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { name, price_modifier, sort_order } = req.body;
+  try {
+    await run('UPDATE sizes SET name = ?, price_modifier = ?, sort_order = ? WHERE id = ?', [name, price_modifier || 0, sort_order || 0, id]);
+    const size = await get('SELECT * FROM sizes WHERE id = ?', [id]);
+    res.json(size);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/sizes/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    await run('DELETE FROM sizes WHERE id = ?', [id]);
+    res.json({ message: 'Размер удален' });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
