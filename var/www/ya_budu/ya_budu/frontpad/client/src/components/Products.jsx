@@ -30,6 +30,8 @@ if (typeof document !== 'undefined') {
 
 // Используем относительный путь для работы через nginx
 const API_URL = process.env.REACT_APP_FONTPAD_API || '';
+// Локальный сервер для операций с размерами и допами
+const LOCAL_API_BASE = '';
 const IMAGE_BASE_URL = process.env.REACT_APP_IMAGE_BASE_URL || '';
 
 // Создаём axios инстанс с таймаутом
@@ -359,7 +361,9 @@ const Products = () => {
                 if (sizeAddonList.length > 0) {
                     try {
                         // Используем новый endpoint через локальный сервер с проверкой размера
-                        await axios.post(`/api/products/${productId}/sizes/${size.id}/addons`, sizeAddonList);
+                        console.log('[CLIENT] Отправка допов на локальный сервер:', size.id, sizeAddonList);
+                        await axios.post(`${LOCAL_API_BASE}/api/products/${productId}/sizes/${size.id}/addons?t=${Date.now()}`, sizeAddonList);
+                        console.log('[CLIENT] Допы отправлены успешно');
                     } catch (e) {
                         console.error('Ошибка сохранения допа размера:', e.message);
                     }
