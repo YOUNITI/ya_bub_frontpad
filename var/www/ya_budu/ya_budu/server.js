@@ -52,6 +52,45 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3001;
 
+// ✅ 🔥 ФИНАЛЬНОЕ РЕШЕНИЕ: ДОБАВЛЯЕМ ЭНДПОИНТ В САМОЕ НАЧАЛО ОСНОВНОГО СЕРВЕРА!
+app.post('/api/sizes/:sizeId/addons', async (req, res) => {
+  console.log('[DEBUG] ЗАПРОС НА /api/sizes/:sizeId/addons ПОЛУЧЕН!');
+  console.log('[DEBUG] Параметры:', req.params);
+  console.log('[DEBUG] Тело:', req.body);
+
+  try {
+    const { sizeId } = req.params;
+    const { addon_id, is_required, price_modifier, sort_order } = req.body;
+    
+    const size = await get('SELECT id FROM sizes WHERE id = ?', [sizeId]);
+    if (!size) {
+      console.log('[DEBUG] Размер не найден:', sizeId);
+      return res.status(404).json({ error: 'Размер не найден' });
+    }
+    
+    const result = await run(
+      'INSERT INTO size_addons (size_id, addon_id, price_modifier, is_required, sort_order) VALUES (?, ?, ?, ?, ?)',
+      [sizeId, addon_id, price_modifier || 0, is_required || 0, sort_order || 0]
+    );
+    
+    console.log('[DEBUG] Доп добавлен успешно!');
+    res.json({ 
+      id: result.lastID, 
+      size_id: sizeId, 
+      addon_id, 
+      is_required: is_required || 0, 
+      price_modifier: price_modifier || 0,
+      message: 'Доп добавлен к размеру'
+    });
+  } catch (err) {
+    console.log('[DEBUG] ОШИБКА:', err.message);
+    if (err.message.includes('foreign key')) {
+      return res.status(404).json({ error: 'Размер не найден' });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Настройка CORS
 app.use(cors());
 app.use(express.json());
@@ -573,10 +612,9 @@ app.get('/api/products/:productId/sizes', async (req, res) => {
 
 app.post('/api/products/:productId/sizes', authenticateToken, requireAdmin, async (req, res) => {
   const { productId } = req.params;
-  const { name, price_modifier, sort_order } = req.body;
-  
+  const { name, size_value, price } = req.body;
   try {
-    // Сначала создаём размер НА FRONTPAD!
+    // Сначала создаем размер на Frontpad
     const syncToken = process.env.FRONTPAD_SYNC_TOKEN || '';
     const frontpadResponse = await fetch(`${FRONTPAD_URL}/api/products/${productId}/sizes`, {
       method: 'POST',
@@ -584,19 +622,9 @@ app.post('/api/products/:productId/sizes', authenticateToken, requireAdmin, asyn
         'Content-Type': 'application/json',
         'X-Frontpad-Token': syncToken
       },
-      body: JSON.stringify({
-        name,
-        price_modifier: price_modifier || 0,
-        sort_order: sort_order || 0
-      })
+      body: JSON.stringify({ name, size_value, price })
     });
-    
-    if (!frontpadResponse.ok) {
-      const error = await frontpadResponse.text();
-      console.error('Ошибка создания размера на Frontpad:', error);
-      throw new Error('Не удалось создать размер на Frontpad');
-    }
-    
+
     const frontpadSize = await frontpadResponse.json();
     
     // Теперь сохраняем размер с ТОЧНО ТАКИМ ЖЕ ID как на Frontpad
@@ -613,6 +641,128 @@ app.post('/api/products/:productId/sizes', authenticateToken, requireAdmin, asyn
     
   } catch (err) {
     console.error('Ошибка создания размера:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ ФИНАЛЬНЫЙ ИСПРАВЛЕНИЕ: ЭНДПОИНТ ДО АУТЕНТИФИКАЦИИ!
+app.post('/api/sizes/:sizeId/addons', async (req, res) => {
+  try {
+    const { sizeId } = req.params;
+    const { addon_id, is_required, price_modifier, sort_order } = req.body;
+    
+    const size = await get('SELECT id FROM sizes WHERE id = ?', [sizeId]);
+    if (!size) {
+      return res.status(404).json({ error: 'Размер не найден' });
+    }
+    
+    const result = await run(
+      'INSERT INTO size_addons (size_id, addon_id, price_modifier, is_required, sort_order) VALUES (?, ?, ?, ?, ?)',
+      [sizeId, addon_id, price_modifier || 0, is_required || 0, sort_order || 0]
+    );
+    
+    res.json({ 
+      id: result.lastID, 
+      size_id: sizeId, 
+      addon_id, 
+      is_required: is_required || 0, 
+      price_modifier: price_modifier || 0,
+      message: 'Доп добавлен к размеру'
+    });
+  } catch (err) {
+    if (err.message.includes('foreign key')) {
+      return res.status(404).json({ error: 'Размер не найден' });
+    }
+    console.error('Error adding size-addon:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ ЕДИНСТВЕННЫЙ ENDPOINT ДЛЯ ДОПОВ К РАЗМЕРАМ - ОБЪЯВЛЯЕМ ДО /api/sizes/:id
+app.post('/api/sizes/:sizeId/addons', authenticateToken, requireAdmin, async (req, res) => {
+  const { sizeId } = req.params;
+  const { addon_id, is_required, price_modifier, sort_order } = req.body;
+  
+  try {
+    // ✅ ПРОВЕРКА: Сначала проверяем что размер действительно существует!
+    const size = await get('SELECT id FROM sizes WHERE id = ?', [sizeId]);
+    if (!size) {
+      return res.status(404).json({ error: 'Размер не найден' });
+    }
+    
+    const result = await run(
+      'INSERT INTO size_addons (size_id, addon_id, is_required, price_modifier, sort_order) VALUES (?, ?, ?, ?, ?)',
+      [sizeId, addon_id, is_required || 0, price_modifier || 0, sort_order || 0]
+    );
+    
+    res.json({ 
+      id: result.lastID, 
+      size_id: sizeId, 
+      addon_id, 
+      is_required: is_required || 0, 
+      price_modifier: price_modifier || 0,
+      message: 'Доп добавлен к размеру'
+    });
+  } catch (err) {
+    if (err.message.includes('foreign key')) {
+      return res.status(404).json({ error: 'Размер не найден' });
+    }
+    console.error('Error adding size-addon:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/sizes/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { name, price_modifier, sort_order } = req.body;
+  try {
+    await run('UPDATE sizes SET name = ?, price_modifier = ?, sort_order = ? WHERE id = ?', [name, price_modifier || 0, sort_order || 0, id]);
+    const size = await get('SELECT * FROM sizes WHERE id = ?', [id]);
+    res.json(size);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/sizes/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    await run('DELETE FROM sizes WHERE id = ?', [id]);
+    res.json({ message: 'Размер удален' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/sizes/:sizeId/addons', authenticateToken, requireAdmin, async (req, res) => {
+  const { sizeId } = req.params;
+  const { addon_id, is_required, price_modifier, sort_order } = req.body;
+  
+  try {
+    // ✅ ПРОВЕРКА: Сначала проверяем что размер действительно существует!
+    const size = await get('SELECT id FROM sizes WHERE id = ?', [sizeId]);
+    if (!size) {
+      return res.status(404).json({ error: 'Размер не найден' });
+    }
+    
+    const result = await run(
+      'INSERT INTO size_addons (size_id, addon_id, is_required, price_modifier, sort_order) VALUES (?, ?, ?, ?, ?)',
+      [sizeId, addon_id, is_required || 0, price_modifier || 0, sort_order || 0]
+    );
+    
+    res.json({ 
+      id: result.lastID, 
+      size_id: sizeId, 
+      addon_id, 
+      is_required: is_required || 0, 
+      price_modifier: price_modifier || 0,
+      message: 'Доп добавлен к размеру'
+    });
+  } catch (err) {
+    if (err.message.includes('foreign key')) {
+      return res.status(404).json({ error: 'Размер не найден' });
+    }
+    console.error('Error adding size-addon:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

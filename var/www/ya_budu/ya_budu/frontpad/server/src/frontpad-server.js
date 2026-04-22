@@ -22,31 +22,26 @@ const server = createServer(app);
 const wss = new WebSocketServer({ server });
 const PORT = process.env.FRONTPAD_PORT || 3005;
 
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// ✅ ЕДИНСТВЕННЫЙ ENDPOINT ДЛЯ ДОПОВ К РАЗМЕРАМ
+// ✅ 🔥 ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ: ЭНДПОИНТ ПЕРЕД ВСЕМИ МИДЛВАРАМИ!
 app.post('/api/sizes/:sizeId/addons', async (req, res) => {
   try {
+    // Проверяем что база инициализирована
+    if (!db) {
+      return res.status(503).json({ error: 'База данных не инициализирована' });
+    }
+    
     const { sizeId } = req.params;
     const { addon_id, is_required, price_modifier, sort_order } = req.body;
     
-    // ✅ ПРОВЕРКА: Сначала проверяем что размер действительно существует!
     const size = await db.get('SELECT id FROM sizes WHERE id = ?', [sizeId]);
     if (!size) {
-      console.log('[ENDPOINT] Размер не найден:', sizeId);
       return res.status(404).json({ error: 'Размер не найден' });
     }
     
-    console.log('[ENDPOINT] Добавляем доп к размеру:', sizeId, 'доп:', addon_id);
-    
     const result = await db.run(
-      'INSERT INTO size_addons (size_id, addon_id, is_required, price_modifier, sort_order) VALUES (?, ?, ?, ?, ?)',
-      [sizeId, addon_id, is_required || 0, price_modifier || 0, sort_order || 0]
+      'INSERT INTO size_addons (size_id, addon_id, price_modifier, is_required, sort_order) VALUES (?, ?, ?, ?, ?)',
+      [sizeId, addon_id, price_modifier || 0, is_required || 0, sort_order || 0]
     );
-    
-    console.log('[ENDPOINT] Доп добавлен успешно, ID:', result.lastID);
     
     res.json({ 
       id: result.lastID, 
@@ -58,12 +53,65 @@ app.post('/api/sizes/:sizeId/addons', async (req, res) => {
     });
   } catch (err) {
     if (err.message.includes('foreign key')) {
-      console.log('[ENDPOINT] Ошибка внешнего ключа:', err.message);
       return res.status(404).json({ error: 'Размер не найден' });
     }
-    console.error('[ENDPOINT] Ошибка добавления допа:', err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// ✅ 🔥 ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ: ЭНДПОИНТ В САМОМ НАЧАЛЕ!
+app.post('/api/sizes/:sizeId/addons', async (req, res) => {
+  console.log('[DEBUG] ✅ ЗАПРОС ПОЛУЧЕН НА ПОРТ 3005! /api/sizes/:sizeId/addons');
+  console.log('[DEBUG] Параметры:', req.params);
+  console.log('[DEBUG] Тело:', req.body);
+
+  try {
+    // Проверяем что база инициализирована
+    if (!db) {
+      console.log('[DEBUG] ❌ База данных не инициализирована');
+      return res.status(503).json({ error: 'База данных не инициализирована' });
+    }
+    
+    const { sizeId } = req.params;
+    const { addon_id, is_required, price_modifier, sort_order } = req.body;
+    
+    const size = await db.get('SELECT id FROM sizes WHERE id = ?', [sizeId]);
+    if (!size) {
+      console.log('[DEBUG] ❌ Размер не найден:', sizeId);
+      return res.status(404).json({ error: 'Размер не найден' });
+    }
+    
+    const result = await db.run(
+      'INSERT INTO size_addons (size_id, addon_id, price_modifier, is_required, sort_order) VALUES (?, ?, ?, ?, ?)',
+      [sizeId, addon_id, price_modifier || 0, is_required || 0, sort_order || 0]
+    );
+    
+    console.log('[DEBUG] ✅ Доп добавлен успешно! ID:', result.lastID);
+    res.json({ 
+      id: result.lastID, 
+      size_id: sizeId, 
+      addon_id, 
+      is_required: is_required || 0, 
+      price_modifier: price_modifier || 0,
+      message: 'Доп добавлен к размеру'
+    });
+  } catch (err) {
+    console.log('[DEBUG] ❌ ОШИБКА:', err.message);
+    if (err.message.includes('foreign key')) {
+      return res.status(404).json({ error: 'Размер не найден' });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ 🔥 ЛОГИРОВАНИЕ НЕ НАЙДЕННЫХ МАРШРУТОВ
+app.use((req, res, next) => {
+  console.log(`[DEBUG] МАРШРУТ НЕ НАЙДЕН: ${req.method} ${req.url}`);
+  res.status(404).json({ error: 'Маршрут не найден', method: req.method, url: req.url });
 });
 
 // Настройка multer для загрузки файлов
@@ -1290,8 +1338,8 @@ app.post('/api/sizes/:sizeId/size-addons', async (req, res) => {
   const { addon_id, is_required, price_modifier, sort_order } = req.body;
   try {
     const result = await db.run(
-      'INSERT INTO size_addons (size_id, addon_id, is_required, price_modifier, sort_order) VALUES (?, ?, ?, ?, ?)',
-      [req.params.sizeId, addon_id, is_required ? 1 : 0, price_modifier || 0, sort_order || 0]
+      'INSERT INTO size_addons (size_id, addon_id, price_modifier, is_required, sort_order) VALUES (?, ?, ?, ?, ?)',
+      [sizeId, addon_id, price_modifier || 0, is_required || 0, sort_order || 0]
     );
     res.json({ id: result.lastID, size_id: req.params.sizeId, addon_id, is_required, price_modifier, sort_order });
   } catch (err) {

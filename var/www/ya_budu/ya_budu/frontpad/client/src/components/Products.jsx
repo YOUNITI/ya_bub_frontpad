@@ -30,7 +30,10 @@ if (typeof document !== 'undefined') {
 
 // Используем относительный путь для работы через nginx
 const API_URL = process.env.REACT_APP_FONTPAD_API || '';
+// Фронтпад сервер для добавления допов к размерам
+const FRONTPAD_URL = 'https://fp.xn--90ag8bb0d.com';
 console.log('[INIT] API_URL:', API_URL);
+console.log('[INIT] FRONTPAD_URL:', FRONTPAD_URL);
 const IMAGE_BASE_URL = process.env.REACT_APP_IMAGE_BASE_URL || '';
 
 // Создаём axios инстанс с таймаутом
@@ -325,6 +328,21 @@ const Products = () => {
                     delete newSizeAddonsLocal[oldSizeId];
                     delete newSizeAddonsLocal[oldSizeIdNum];
                     console.log('[CLIENT] Добавлены допы для нового ID', newSizeId, ':', addons);
+                    
+                    // ✅ ИСПОЛЬЗУЕМ ТОЛЬКО РАБОЧИЙ ENDPOINT!
+                    for (const addon of addons) {
+                        try {
+                            await axios.post(`/api/products/${productId}/sizes/${newSizeId}/addons`, [addon], {
+                                headers: {
+                                    'Cache-Control': 'no-cache',
+                                    'Pragma': 'no-cache'
+                                }
+                            });
+                            console.log('[CLIENT] Доп сохранен для размера:', newSizeId);
+                        } catch (error) {
+                            console.error('[CLIENT] Ошибка сохранения допа:', error.message);
+                        }
+                    }
                 }
             });
             
@@ -363,44 +381,6 @@ const Products = () => {
             };
             
             await axios.put(`${API_URL}/api/products/${editingProduct.id}`, cleanProductData);
-        }
-        
-        // 3. Сохраняем допы для размеров
-        if (hasSizes && productId) {
-            console.log('[CLIENT] Сохраняем допы для размеров:');
-            console.log('[CLIENT] newSizesLocal:', newSizesLocal);
-            console.log('[CLIENT] newSizeAddonsLocal:', newSizeAddonsLocal);
-            
-            for (const size of newSizesLocal) {
-                const sizeAddonList = newSizeAddonsLocal[size.id] || [];
-                console.log('[CLIENT] Размер:', size.id, size.name, 'допы:', sizeAddonList, 'количество:', sizeAddonList.length);
-                
-                if (sizeAddonList.length > 0) {
-                    try {
-                        // Используем новый endpoint через локальный сервер с проверкой размера
-                        const addonUrl = `/api/products/${productId}/sizes/${size.id}/addons?t=${Date.now()}&v=${Math.random()}`;
-                        console.log('[CLIENT] Отправка допов на локальный сервер:', addonUrl, sizeAddonList);
-                        console.log('[CLIENT] productId:', productId, 'sizeId:', size.id);
-
-                        try {
-                            const response = await axios.post(addonUrl, sizeAddonList, {
-                                headers: {
-                                    'Cache-Control': 'no-cache',
-                                    'Pragma': 'no-cache'
-                                }
-                            });
-                            console.log('[CLIENT] Ответ от сервера:', response.status, response.data);
-                        } catch (error) {
-                            console.error('[CLIENT] Ошибка запроса:', error.message);
-                            console.error('[CLIENT] URL:', addonUrl);
-                            console.error('[CLIENT] Данные:', sizeAddonList);
-                        }
-                        console.log('[CLIENT] Допы отправлены успешно');
-                    } catch (e) {
-                        console.error('Ошибка сохранения допа размера:', e.message);
-                    }
-                }
-            }
         }
         
         // Сохраняем скидку на товар
