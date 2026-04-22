@@ -2979,7 +2979,40 @@ app.delete('/api/products/:productId/sizes/:sizeId/addons', async (req, res) => 
   }
 });
 
-// Добавить доп к размеру
+// Добавить допы к размеру (массив дополнений)
+app.post('/api/products/:productId/sizes/:sizeId/addons', async (req, res) => {
+  try {
+    const { productId, sizeId } = req.params;
+    const addons = req.body; // Массив дополнений: [{name: '', price: 0}, ...]
+
+    // Проверяем, существует ли размер
+    const size = await get('SELECT id FROM sizes WHERE id = ? AND product_id = ?', [sizeId, productId]);
+    if (!size) {
+      return res.status(400).json({ 
+        error: 'Размер не найден', 
+        message: 'Невозможно добавить дополнение: указанный размер не существует в базе данных или не принадлежит продукту' 
+      });
+    }
+
+    // Удаляем старые дополнения для этого размера
+    await run('DELETE FROM size_addons WHERE size_id = ?', [sizeId]);
+
+    // Добавляем новые дополнения
+    for (const addon of addons) {
+      await run(`
+        INSERT INTO size_addons (size_id, addon_name, addon_price) 
+        VALUES (?, ?, ?)
+      `, [sizeId, addon.name, addon.price || 0]);
+    }
+
+    res.json({ success: true, message: 'Дополнения сохранены' });
+  } catch (err) {
+    console.error('Error adding size-addons:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Устаревший маршрут для совместимости (удалить в будущем)
 app.post('/api/sizes/:sizeId/addons', async (req, res) => {
   try {
     const { sizeId } = req.params;

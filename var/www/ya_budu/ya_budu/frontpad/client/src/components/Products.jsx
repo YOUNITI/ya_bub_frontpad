@@ -349,7 +349,8 @@ const Products = () => {
             console.log('[CLIENT] newSizeAddonsLocal ПОСЛЕ замены ID:', newSizeAddonsLocal);
             
             setSizes(newSizesLocal);
-            setSizeAddons(newSizeAddonsLocal);
+            setSizeAddons(remappedSizeAddons);
+            newSizeAddonsLocal = remappedSizeAddons;
         }
         
         // 2. Обновляем товар
@@ -703,7 +704,7 @@ const Products = () => {
       is_required: addonIsRequired ? 1 : 0
     });
     
-    setSizeAddons(newSizeAddons);
+    setSizeAddons(updatedSizeAddons);
     setShowAddonSelectModal(false);
     setSelectedAddonTemplate(null);
     setAddonPriceModifier(0);
