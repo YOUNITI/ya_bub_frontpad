@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-22
+- Исправлена ошибка "Unexpected reserved word 'await'" в Products.jsx: заменён forEach на for...of цикл для корректной работы с await в асинхронной функции
+- Исправлена ошибка "Identifier 'isServer' has already been declared": удалён дубликат объявления переменной
+- Исправлены ошибки "is not defined" для переменных remappedSizeAddons и updatedSizeAddons
+- Изменён файл: var/www/ya_budu/ya_budu/frontpad/client/src/components/Products.jsx
+
 ## [2026-04-21] - Исправлена ошибка добавления допов к размерам товара
 
 ### Проблема

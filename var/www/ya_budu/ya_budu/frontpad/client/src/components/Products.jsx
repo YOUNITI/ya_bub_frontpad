@@ -32,13 +32,37 @@ if (typeof document !== 'undefined') {
 const API_URL = process.env.REACT_APP_FONTPAD_API || '';
 // Фронтпад сервер для добавления допов к размерам
 const FRONTPAD_URL = 'https://fp.xn--90ag8bb0d.com';
-console.log('[INIT] API_URL:', API_URL);
-console.log('[INIT] FRONTPAD_URL:', FRONTPAD_URL);
+// Конфигурация для SSR/безопасности
+const isServer = typeof window === 'undefined';
+
+let _API_URL = API_URL;
+let _FRONTPAD_URL = FRONTPAD_URL;
+
+if (isServer) {
+  // На сервере используем прокси или локальный URL
+  _API_URL = '/api';
+  _FRONTPAD_URL = 'http://localhost:3005';
+}
+
+console.log('[INIT] API_URL:', _API_URL);
+console.log('[INIT] FRONTPAD_URL:', _FRONTPAD_URL);
 const IMAGE_BASE_URL = process.env.REACT_APP_IMAGE_BASE_URL || '';
+
+// Настраиваем axios для SSR
+apiClient.defaults.baseURL = _API_URL;
+apiClient.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
+apiClient.defaults.withCredentials = true;
+
+// SSR: заменяем URL на прокси
+if (isServer) {
+  console.log('[SSR] Используется прокси API:', _API_URL);
+  console.log('[SSR] Используется прокси Frontpad:', _FRONTPAD_URL);
+}
 
 // Создаём axios инстанс с таймаутом
 const apiClient = axios.create({
-  timeout: 30000 // 30 секунд timeout
+  timeout: 30000, // 30 секунд timeout
+  withCredentials: true
 });
 
 const Products = () => {
@@ -317,7 +341,7 @@ const Products = () => {
             console.log('[CLIENT] sizeAddons ДО замены ID:', sizeAddons);
             console.log('[CLIENT] sizeIdMap:', sizeIdMap);
             
-            Object.entries(sizeAddons).forEach(([oldSizeId, addons]) => {
+            for (const [oldSizeId, addons] of Object.entries(sizeAddons)) {
                 const oldSizeIdNum = parseInt(oldSizeId);
                 const newSizeId = sizeIdMap[oldSizeIdNum];
                 console.log('[CLIENT] Заменяем ID:', oldSizeId, '(число:', oldSizeIdNum, ') на', newSizeId);
@@ -344,13 +368,12 @@ const Products = () => {
                         }
                     }
                 }
-            });
+            }
             
             console.log('[CLIENT] newSizeAddonsLocal ПОСЛЕ замены ID:', newSizeAddonsLocal);
             
             setSizes(newSizesLocal);
-            setSizeAddons(remappedSizeAddons);
-            newSizeAddonsLocal = remappedSizeAddons;
+            setSizeAddons(newSizeAddonsLocal);
         }
         
         // 2. Обновляем товар
@@ -704,7 +727,7 @@ const Products = () => {
       is_required: addonIsRequired ? 1 : 0
     });
     
-    setSizeAddons(updatedSizeAddons);
+    setSizeAddons(newSizeAddons);
     setShowAddonSelectModal(false);
     setSelectedAddonTemplate(null);
     setAddonPriceModifier(0);
