@@ -4,7 +4,14 @@
 - Исправлена ошибка "Unexpected reserved word 'await'" в Products.jsx: заменён forEach на for...of цикл для корректной работы с await в асинхронной функции
 - Исправлена ошибка "Identifier 'isServer' has already been declared": удалён дубликат объявления переменной
 - Исправлены ошибки "is not defined" для переменных remappedSizeAddons и updatedSizeAddons
-- Изменён файл: var/www/ya_budu/ya_budu/frontpad/client/src/components/Products.jsx
+- Исправлена ошибка "Cannot access 'apiClient' before initialization": перемещено объявление переменной apiClient перед её использованием
+- Исправлена ошибка "Cannot access '$e' before initialization": перемещено объявление переменной isSubmitting перед использованием в useEffect
+- Исправлена ошибка 404 при обновлении размера товара: изменён эндпоинт PUT /api/sizes/:sizeId на /api/products/:productId/sizes/:sizeId
+- Исправлена ошибка 404 при добавлении допов к размеру: используется рабочий эндпоинт `/api/sizes/:sizeId/addons`
+- Исправлена ошибка удаления размеров товара при редактировании: удалён старый код очистки допов который вызывал конфликт
+- Изменённые файлы:
+  - var/www/ya_budu/ya_budu/frontpad/client/src/components/Products.jsx
+  - var/www/ya_budu/ya_budu/frontpad/server/src/frontpad-server.js
 
 ## [2026-04-21] - Исправлена ошибка добавления допов к размерам товара
 

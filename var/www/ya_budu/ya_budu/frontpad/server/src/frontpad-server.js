@@ -22,7 +22,91 @@ const server = createServer(app);
 const wss = new WebSocketServer({ server });
 const PORT = process.env.FRONTPAD_PORT || 3005;
 
-// ✅ 🔥 ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ: ЭНДПОИНТ ПЕРЕД ВСЕМИ МИДЛВАРАМИ!
+// ✅ 🔥 ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ: ЭНДПОИНТЫ ПЕРЕД ВСЕМИ МИДЛВАРАМИ!
+app.post('/api/products/:productId/sizes/:sizeId/addons', async (req, res) => {
+  console.log('[FRONTPAD] ✅ ЗАПРОС ПОЛУЧЕН! /api/products/:productId/sizes/:sizeId/addons');
+  console.log('[FRONTPAD] Параметры:', req.params);
+  console.log('[FRONTPAD] Тело:', req.body);
+  
+  try {
+    const { productId, sizeId } = req.params;
+    const addons = req.body;
+
+    // Проверяем, существует ли размер
+    const size = await db.get('SELECT id FROM sizes WHERE id = ?', [sizeId]);
+    if (!size) {
+      console.log('[FRONTPAD] Размер не найден:', sizeId);
+      return res.status(404).json({ error: 'Размер не найден' });
+    }
+
+    // Удаляем старые дополнения для этого размера
+    await db.run('DELETE FROM size_addons WHERE size_id = ?', [sizeId]);
+
+    // Добавляем новые дополнения
+    if (addons && Array.isArray(addons) && addons.length > 0) {
+      console.log('[FRONTPAD] Добавляем', addons.length, 'допов');
+      for (const addon of addons) {
+        await db.run(`
+          INSERT INTO size_addons (size_id, addon_id, price_modifier, is_required)
+          VALUES (?, ?, ?, ?)
+        `, [sizeId, addon.addon_id, addon.price_modifier || 0, addon.is_required || 0]);
+      }
+    }
+
+    console.log('[FRONTPAD] Допы успешно добавлены');
+    res.json({ success: true, addons_added: addons ? addons.length : 0 });
+  } catch (error) {
+    console.error('[FRONTPAD] Ошибка при добавлении дополнений:', error);
+    res.status(500).json({ error: 'Ошибка сервера при добавлении дополнений' });
+  }
+});
+
+app.post('/api/sizes/:sizeId/addons', async (req, res) => {
+  try {
+    const { productId, sizeId } = req.params;
+    const addons = req.body;
+
+    console.log('[FRONTPAD] Запрос на добавление допов для размера:', sizeId, 'товар:', productId);
+    console.log('[FRONTPAD] Допы из запроса:', addons);
+    console.log('[FRONTPAD] Количество допов:', addons ? addons.length : 0);
+
+    // Проверяем, существует ли размер
+    const size = await db.get('SELECT id FROM sizes WHERE id = ?', [sizeId]);
+    if (!size) {
+      console.log('[FRONTPAD] Размер не найден:', sizeId);
+      return res.status(400).json({
+        error: 'Размер не найден',
+        message: 'Невозможно добавить дополнение: указанный размер не существует в базе данных'
+      });
+    }
+
+    console.log('[FRONTPAD] Размер найден, добавляем допы...');
+
+    // Удаляем старые дополнения для этого размера
+    await db.run('DELETE FROM size_addons WHERE size_id = ?', [sizeId]);
+
+    // Добавляем новые дополнения
+    if (addons && Array.isArray(addons) && addons.length > 0) {
+      console.log('[FRONTPAD] Добавляем', addons.length, 'допов');
+      for (const addon of addons) {
+        console.log('[FRONTPAD] Добавляем доп:', addon);
+        await db.run(`
+          INSERT INTO size_addons (size_id, addon_id, price_modifier, is_required)
+          VALUES (?, ?, ?, ?)
+        `, [sizeId, addon.addon_id, addon.price_modifier || 0, addon.is_required || 0]);
+      }
+    } else {
+      console.log('[FRONTPAD] Нет допов для добавления');
+    }
+
+    console.log('[FRONTPAD] Допы успешно добавлены');
+    res.json({ success: true, addons_added: addons ? addons.length : 0 });
+  } catch (error) {
+    console.error('[FRONTPAD] Ошибка при добавлении дополнений:', error);
+    res.status(500).json({ error: 'Ошибка сервера при добавлении дополнений' });
+  }
+});
+
 app.post('/api/sizes/:sizeId/addons', async (req, res) => {
   try {
     // Проверяем что база инициализирована
@@ -1385,52 +1469,7 @@ app.delete('/api/products/:productId/sizes/:sizeId/addons', async (req, res) => 
 
 
 
- // ✅ НОВЫЙ ENDPOINT: Обработка дополнений для размера
-app.post('/api/products/:productId/sizes/:sizeId/addons', async (req, res) => {
-  try {
-    const { productId, sizeId } = req.params;
-    const addons = req.body;
 
-    console.log('[FRONTPAD] Запрос на добавление допов для размера:', sizeId, 'товар:', productId);
-    console.log('[FRONTPAD] Допы из запроса:', addons);
-    console.log('[FRONTPAD] Количество допов:', addons ? addons.length : 0);
-
-    // Проверяем, существует ли размер
-    const size = await db.get('SELECT id FROM sizes WHERE id = ?', [sizeId]);
-    if (!size) {
-      console.log('[FRONTPAD] Размер не найден:', sizeId);
-      return res.status(400).json({
-        error: 'Размер не найден',
-        message: 'Невозможно добавить дополнение: указанный размер не существует в базе данных'
-      });
-    }
-
-    console.log('[FRONTPAD] Размер найден, добавляем допы...');
-
-    // Удаляем старые дополнения для этого размера
-    await db.run('DELETE FROM size_addons WHERE size_id = ?', [sizeId]);
-
-    // Добавляем новые дополнения
-    if (addons && Array.isArray(addons) && addons.length > 0) {
-      console.log('[FRONTPAD] Добавляем', addons.length, 'допов');
-      for (const addon of addons) {
-        console.log('[FRONTPAD] Добавляем доп:', addon);
-        await db.run(`
-          INSERT INTO size_addons (size_id, addon_id, price_modifier, is_required)
-          VALUES (?, ?, ?, ?)
-        `, [sizeId, addon.addon_id, addon.price_modifier || 0, addon.is_required || 0]);
-      }
-    } else {
-      console.log('[FRONTPAD] Нет допов для добавления');
-    }
-
-    console.log('[FRONTPAD] Допы успешно добавлены');
-    res.json({ success: true, addons_added: addons ? addons.length : 0 });
-  } catch (error) {
-    console.error('[FRONTPAD] Ошибка при добавлении дополнений:', error);
-    res.status(500).json({ error: 'Ошибка сервера при добавлении дополнений' });
-  }
-});
 
 
 

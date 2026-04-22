@@ -48,6 +48,12 @@ console.log('[INIT] API_URL:', _API_URL);
 console.log('[INIT] FRONTPAD_URL:', _FRONTPAD_URL);
 const IMAGE_BASE_URL = process.env.REACT_APP_IMAGE_BASE_URL || '';
 
+// Создаём axios инстанс с таймаутом
+const apiClient = axios.create({
+  timeout: 30000, // 30 секунд timeout
+  withCredentials: true
+});
+
 // Настраиваем axios для SSR
 apiClient.defaults.baseURL = _API_URL;
 apiClient.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
@@ -58,12 +64,6 @@ if (isServer) {
   console.log('[SSR] Используется прокси API:', _API_URL);
   console.log('[SSR] Используется прокси Frontpad:', _FRONTPAD_URL);
 }
-
-// Создаём axios инстанс с таймаутом
-const apiClient = axios.create({
-  timeout: 30000, // 30 секунд timeout
-  withCredentials: true
-});
 
 const Products = () => {
   // Используем DataContext для товаров, категорий и допов (централизованное кэширование)
@@ -90,6 +90,7 @@ const Products = () => {
   const [importing, setImporting] = useState(false);
   const [expandedCategories, setExpandedCategories] = useState({});
   const [localProducts, setLocalProducts] = useState([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
   // Используем useRef для хранения стабильной ссылки на localProducts
   // Это нужно для handleProductsDragEnd чтобы избежать проблем с замыканиями
@@ -224,7 +225,6 @@ const Products = () => {
     }
   };
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [originalProductData, setOriginalProductData] = useState(null);
 
   const handleSubmit = async (e) => {
@@ -253,20 +253,7 @@ const Products = () => {
     try {
         let productId = editingProduct?.id;
         
-        // ✅ ФИКС ОШИБКИ: Сначала удаляем ВСЕ допы для размеров перед сохранением товара
-        if (editingProduct) {
-            try {
-                const sizesRes = await axios.get(`/api/products/${productId}/sizes`);
-                const sizesToClean = sizesRes.data || [];
-                for (const size of sizesToClean) {
-                    try {
-                        await axios.delete(`/api/products/${productId}/sizes/${size.id}/addons`);
-                    } catch (e) {}
-                }
-                // Ждём 1 секунду чтобы всё очистилось
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            } catch (e) {}
-        }
+
         
         // Подготовка данных товара
         const productData = {
@@ -313,7 +300,7 @@ const Products = () => {
                 
                 if (existingSizeMap[sizeKey]) {
                     // Размер уже существует - обновляем цену
-                    await axios.put(`/api/sizes/${existingSizeMap[sizeKey].id}`, {
+                    await axios.put(`/api/products/${productId}/sizes/${existingSizeMap[sizeKey].id}`, {
                         name: size.name,
                         price_modifier: size.price
                     });
@@ -356,7 +343,12 @@ const Products = () => {
                     // ✅ ИСПОЛЬЗУЕМ ТОЛЬКО РАБОЧИЙ ENDPOINT!
                     for (const addon of addons) {
                         try {
-                            await axios.post(`/api/products/${productId}/sizes/${newSizeId}/addons`, [addon], {
+                            await axios.post(`/api/sizes/${newSizeId}/addons`, {
+                                addon_id: addon.addon_id,
+                                price_modifier: addon.price_modifier,
+                                is_required: addon.is_required,
+                                sort_order: 0
+                            }, {
                                 headers: {
                                     'Cache-Control': 'no-cache',
                                     'Pragma': 'no-cache'
