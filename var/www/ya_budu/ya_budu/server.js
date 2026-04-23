@@ -227,6 +227,25 @@ const upload = multer({ storage: storage });
 // Подключение к базе данных через унифицированный модуль
 const initializeDb = async () => {
     await initDb();
+
+    // Инициализация точек самовывоза
+    try {
+        const existingPoints = await all('SELECT COUNT(*) as count FROM pickup_points');
+        if (existingPoints[0].count === 0) {
+            console.log('Добавление начальных точек самовывоза...');
+
+            await run('INSERT INTO pickup_points (name, address, schedule, sort_order) VALUES (?, ?, ?, ?)',
+                ['Ресторан "ЯБУДУ"', 'Профессора Малигонова 35', 'Пн-Чт 11:00-22:00, Пт-Сб 11:00-23:00, Вс 11:00-22:00', 1]);
+
+            await run('INSERT INTO pickup_points (name, address, schedule, sort_order) VALUES (?, ?, ?, ?)',
+                ['Мурата Ахеджака 26', 'Мурата Ахеджака 26', 'Пн-Вс 10:00-22:00', 2]);
+
+            console.log('Точки самовывоза добавлены');
+        }
+    } catch (err) {
+        console.warn('Ошибка при инициализации точек самовывоза:', err.message);
+    }
+
     console.log('База данных инициализирована');
 };
 
@@ -1989,6 +2008,17 @@ app.get('/api/delivery-zones', async (req, res) => {
     res.json([]);
   } catch (err) {
     console.error('Ошибка получения районов доставки:', err);
+    res.json([]);
+  }
+});
+
+// Получить все активные точки самовывоза
+app.get('/api/pickup-points', async (req, res) => {
+  try {
+    const points = await all('SELECT * FROM pickup_points WHERE is_active = 1 ORDER BY sort_order ASC, id ASC');
+    res.json(points || []);
+  } catch (err) {
+    console.error('Ошибка получения точек самовывоза:', err);
     res.json([]);
   }
 });
