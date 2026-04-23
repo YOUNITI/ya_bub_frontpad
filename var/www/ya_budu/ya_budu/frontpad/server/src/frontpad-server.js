@@ -499,13 +499,25 @@ app.delete('/api/products/:id', async (req, res) => {
 
 // Заказы
 app.get('/api/orders', async (req, res) => {
-  const { status } = req.query;
+  const { status, point_id } = req.query;
   try {
     let query = 'SELECT * FROM orders';
     const params = [];
+    const conditions = [];
+    
     if (status && status !== 'all') {
-      query += ' WHERE status = ?';
+      conditions.push('status = ?');
       params.push(status);
+    }
+    
+    // Фильтр по точке
+    if (point_id && point_id !== '0') {
+      conditions.push('point_id = ?');
+      params.push(parseInt(point_id));
+    }
+    
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
     }
     query += ' ORDER BY created_at DESC';
     const orders = await db.all(query, params);
@@ -569,12 +581,15 @@ app.post('/api/orders', async (req, res) => {
     const fullAddress = address || 
       (street ? street + (building ? ', д.' + building : '') + (apartment ? ', кв.' + apartment : '') : '');
     
+    // Определяем point_id для заказа (по умолчанию 1)
+    let orderPointId = req.body.point_id || 1;
+
     const result = await db.run(
       `INSERT INTO orders 
        (guest_name, guest_phone, guest_email, order_type, payment, comment, items, total_amount, 
         status, created_at, address, street, building, apartment, entrance, floor, intercom, 
-        is_asap, delivery_date, delivery_time, custom_time) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'новый', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        is_asap, delivery_date, delivery_time, custom_time, point_id) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'новый', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         guest_name, guest_phone, guest_email || null, 
         order_type || 'delivery', payment || 'cash', comment || null, 
@@ -583,7 +598,8 @@ app.post('/api/orders', async (req, res) => {
         fullAddress || null, street || null, building || null, apartment || null, 
         entrance || null, floor || null, intercom || null,
         is_asap !== undefined ? (is_asap ? 1 : 0) : 1,
-        delivery_date || null, delivery_time || null, custom_time || null
+        delivery_date || null, delivery_time || null, custom_time || null,
+        orderPointId
       ]
     );
     const order = await db.get('SELECT * FROM orders WHERE id = ?', [result.lastID]);
@@ -1241,6 +1257,12 @@ app.post('/api/products/:productId/sizes', async (req, res) => {
 
 app.delete('/api/products/:productId/sizes', async (req, res) => {
   try {
+    // Сначала удаляем ВСЕ допы для всех размеров этого товара
+    const sizes = await db.all('SELECT id FROM sizes WHERE product_id = ?', [req.params.productId]);
+    for (const size of sizes) {
+      await db.run('DELETE FROM size_addons WHERE size_id = ?', [size.id]);
+    }
+    // Потом удаляем сами размеры
     await db.run('DELETE FROM sizes WHERE product_id = ?', [req.params.productId]);
     res.json({ deleted: 1 });
   } catch (err) {

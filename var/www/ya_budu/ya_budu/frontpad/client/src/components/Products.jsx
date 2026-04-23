@@ -283,33 +283,30 @@ const Products = () => {
         let newSizeAddonsLocal = {...sizeAddons};
         
         // 1. Сохраняем размеры - ВСЕГДА, даже при редактировании!
-        if (hasSizes && productId) {
+        const sizeIdMap = {};
+        
+        if (productId) {
             // Получаем текущие размеры с сервера
             const existingSizesRes = await axios.get(`/api/products/${productId}/sizes`);
             const existingSizes = existingSizesRes.data || [];
             
-            // Создаём карту существующих размеров по названию
-            const existingSizeMap = {};
-            existingSizes.forEach(s => existingSizeMap[s.name.trim().toLowerCase()] = s);
+            // ✅ ВСЕГДА УДАЛЯЕМ ВСЕ СТАРЫЕ РАЗМЕРЫ!
+            try {
+                await axios.delete(`/api/products/${productId}/sizes`);
+            } catch (e) {
+                console.error('Ошибка удаления старых размеров:', e);
+            }
             
-            const sizeIdMap = {};
-            
-            for (let i = 0; i < sizes.length; i++) {
-                const size = sizes[i];
-                const sizeKey = size.name.trim().toLowerCase();
-                
-                if (existingSizeMap[sizeKey]) {
-                    // Размер уже существует - обновляем цену
-                    await axios.put(`/api/products/${productId}/sizes/${existingSizeMap[sizeKey].id}`, {
-                        name: size.name,
-                        price_modifier: size.price
-                    });
-                    newSizesLocal[i] = {
-                        ...size,
-                        id: existingSizeMap[sizeKey].id
-                    };
-                    sizeIdMap[size.id] = existingSizeMap[sizeKey].id;
-                } else {
+            // Если размеры больше нет - не создаём ничего
+            if (!hasSizes || sizes.length === 0) {
+                // Очищаем размеры полностью
+                newSizesLocal = [];
+                setSizes([]);
+                setHasSizes(false);
+            } else {
+                // Создаём все размеры заново
+                for (let i = 0; i < sizes.length; i++) {
+                    const size = sizes[i];
                     // Новый размер - создаём
                     const response = await axios.post(`/api/products/${productId}/sizes`, {
                         name: size.name,
@@ -434,7 +431,6 @@ const Products = () => {
         // ✅ ЗАКРЫВАЕМ МОДАЛКУ И СБРАСЫВАЕМ ФОРМУ
         setShowModal(false);
         setEditingProduct(null);
-        resetForm();
         setOriginalProductData(null);
         
         // ✅ ПЕРЕЗАГРУЖАЕМ ДАННЫЕ ТОВАРА ДЛЯ АКТУАЛЬНОГО STATE

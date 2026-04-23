@@ -1,1 +1,143 @@
-<!doctype html><html lang="ru"><head><meta charset="utf-8"/><link rel="icon" href="/favicon.ico"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="theme-color" content="#000000"/><meta name="description" content="YounitiPad - система управления заказами"/><title>YounitiPad - Управление заказами</title><script defer="defer" src="/static/js/main.5fbbed3e.js"></script><link href="/static/css/main.8272b40a.css" rel="stylesheet"></head><body><noscript>You need to enable JavaScript to run this app.</noscript><div id="root"></div></body></html>
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#111111">
+    <meta name="background-color" content="#111111">
+    <meta name="description" content="Быстрая доставка фаст-фуда - бургеры, пицца, роллы и многое другое">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="ЯБУДУ">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="application-name" content="ЯБУДУ">
+    
+    <title>ЯБУДУ | Доставка и готовка фаст-фуда</title>
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/assets/manifest-DdCdxx5f.json">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/assets/icon-THZSp9om.svg">
+    <link rel="alternate icon" href="/assets/icon-72x72-DgmkxQuE.png">
+    <link rel="mask-icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIj4KICA8cmVjdCB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgZmlsbD0iIzExMTExMSIvPgogIDxyZWN0IHg9IjIwIiB5PSIyMCIgd2lkdGg9IjQ3MiIgaGVpZ2h0PSI0NzIiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI0ZGRDcwMCIgc3Ryb2tlLXdpZHRoPSIxMiIvPgogIDx0ZXh0IHg9IjI1NiIgeT0iMjgwIiBmb250LXNpemU9IjIwMCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSI+8J+NlDwvdGV4dD4KICA8dGV4dCB4PSIyNTYiIHk9IjQyMCIgZm9udC1mYW1pbHk9Ik1vbnRzZXJyYXQsIEFyaWFsLCBzYW5zLXNlcmlmIiBmb250LXNpemU9IjQ4IiBmb250LXdlaWdodD0iYm9sZCIgZmlsbD0iI0ZGRDcwMCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+0K/QkdCj0JTQozwvdGV4dD4KPC9zdmc+Cg==" color="#FFD700">
+    
+    <!-- Apple Touch Icons -->
+    <link rel="apple-touch-icon" href="/assets/icon-192x192-BreYWf9-.png">
+    <link rel="apple-touch-icon" sizes="72x72" href="/assets/icon-72x72-DgmkxQuE.png">
+    <link rel="apple-touch-icon" sizes="96x96" href="/assets/icon-96x96-M0kQKjFU.png">
+    <link rel="apple-touch-icon" sizes="128x128" href="/assets/icon-128x128-Ce4_HIew.png">
+    <link rel="apple-touch-icon" sizes="144x144" href="/assets/icon-144x144-BWDRgMxy.png">
+    <link rel="apple-touch-icon" sizes="152x152" href="/assets/icon-152x152-CYi8p08f.png">
+    <link rel="apple-touch-icon" sizes="192x192" href="/assets/icon-192x192-BreYWf9-.png">
+    <link rel="apple-touch-icon" sizes="384x384" href="/assets/icon-384x384-mOwVQjwV.png">
+    <link rel="apple-touch-icon" sizes="512x512" href="/assets/icon-512x512-BI9vUkkM.png">
+    
+    <!-- Preconnect для производительности -->
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    
+    <!-- Стили -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    
+    <!-- Splash Screen для iOS -->
+    <link rel="apple-touch-startup-image" href="/assets/icon-512x512-BI9vUkkM.png">
+  <script type="module" crossorigin src="/assets/index-qJ8vr6ra.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-CwnP_oUj.css">
+</head>
+<body>
+    <div id="root"></div>
+    
+    <!-- Service Worker Registration -->
+    <script>
+        // Регистрация Service Worker
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/service-worker.js')
+                    .then((registration) => {
+                        console.log('[PWA] Service Worker зарегистрирован:', registration.scope);
+                        
+                        // Проверяем обновления
+                        registration.addEventListener('updatefound', () => {
+                            const newWorker = registration.installing;
+                            console.log('[PWA] Найдено обновление Service Worker');
+                            
+                            newWorker.addEventListener('statechange', () => {
+                                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                    // Новая версия доступна
+                                    console.log('[PWA] Новая версия доступна!');
+                                    // Можно показать уведомление пользователю
+                                    if (confirm('Доступна новая версия приложения! Обновить сейчас?')) {
+                                        newWorker.postMessage('skipWaiting');
+                                        window.location.reload();
+                                    }
+                                }
+                            });
+                        });
+                    })
+                    .catch((error) => {
+                        console.log('[PWA] Ошибка регистрации Service Worker:', error);
+                    });
+                
+                // Обработка сообщений от Service Worker
+                navigator.serviceWorker.addEventListener('message', (event) => {
+                    console.log('[PWA] Сообщение от SW:', event.data);
+                });
+                
+                // Обработка обновления
+                let refreshing = false;
+                navigator.serviceWorker.addEventListener('controllerchange', () => {
+                    if (refreshing) return;
+                    refreshing = true;
+                    console.log('[PWA] Контроллер изменен, перезагрузка...');
+                    window.location.reload();
+                });
+            });
+        } else {
+            console.log('[PWA] Service Worker не поддерживается');
+        }
+        
+        // Проверка возможности установки PWA
+        let deferredPrompt;
+        window.addEventListener('beforeinstallprompt', (e) => {
+            // Предотвращаем автоматический показ промпта
+            e.preventDefault();
+            deferredPrompt = e;
+            console.log('[PWA] Приложение может быть установлено');
+            
+            // Можно показать кнопку установки
+            // showInstallButton();
+        });
+        
+        // Приложение установлено
+        window.addEventListener('appinstalled', () => {
+            console.log('[PWA] Приложение установлено!');
+            deferredPrompt = null;
+        });
+        
+        // Функция для установки PWA (можно вызвать по кнопке)
+        async function installPWA() {
+            if (!deferredPrompt) {
+                console.log('[PWA] Установка недоступна');
+                return;
+            }
+            deferredPrompt.prompt();
+            const { outcome } = await deferredPrompt.userChoice;
+            console.log('[PWA] Результат установки:', outcome);
+            deferredPrompt = null;
+        }
+        
+        // Экспортируем для использования в React
+        window.installPWA = installPWA;
+        
+        // Проверка режима standalone (установленное приложение)
+        if (window.matchMedia('(display-mode: standalone)').matches || 
+            window.navigator.standalone === true) {
+            console.log('[PWA] Приложение запущено в standalone режиме');
+            document.body.classList.add('pwa-standalone');
+        }
+    </script>
+</body>
+</html>

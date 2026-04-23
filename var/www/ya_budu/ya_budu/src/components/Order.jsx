@@ -23,7 +23,8 @@ const Order = () => {
     payment: 'cash',
     comment: '',
     agreement: false,
-    orderType: 'delivery'
+    orderType: 'delivery',
+    pickupLocation: '1'
   });
   const [showCustomTime, setShowCustomTime] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -176,6 +177,7 @@ const Order = () => {
         total_amount: finalTotal,
         zone_id: selectedZone ? selectedZone.id : null,
         delivery_price: deliveryPrice,
+        location_id: formData.orderType === 'pickup' ? parseInt(formData.pickupLocation) : null,
         zone_name: selectedZone ? selectedZone.name : null
       };
 
@@ -470,19 +472,49 @@ const Order = () => {
                 ) : (
                   <div>
                     <h3 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 font-heading">Пункт самовывоза</h3>
-                    <div className="bg-green-50 border border-green-200 p-4 sm:p-6 rounded-xl">
-                      <div className="flex items-start">
-                        <i className="fas fa-store text-xl sm:text-2xl text-green-600 mr-3 sm:mr-4 mt-1"></i>
-                        <div>
-                          <h4 className="font-bold text-base sm:text-lg text-green-800">Ресторан "ЯБУДУ"</h4>
-                          <p className="text-gray-700 mt-2 text-sm sm:text-base">Профессора Малигонова 35</p>
-                          <p className="text-gray-500 text-xs sm:text-sm mt-1">Пн-Чт 11:00-22:00, Пт-Сб 11:00-23:00, Вс 11:00-22:00</p>
-                        </div>
-                      </div>
+                    <p className="text-gray-600 mb-6">Выберите удобный для вас пункт самовывоза:</p>
+                    <div className="bg-yellow-50 border border-yellow-200 p-4 rounded-lg mb-6">
+                      <p className="text-yellow-800 text-sm"><strong>💡 Подсказка:</strong> Вы можете выбрать один из двух пунктов самовывоза. Заказ будет готов к выдаче в выбранном месте.</p>
                     </div>
-                    <p className="text-xs sm:text-sm text-gray-500 mt-4">
-                      После подтверждения заказа мы свяжемся с вами и сообщим, когда блюда будут готовы к выдаче.
-                    </p>
+                    <div className="space-y-4">
+                      <label className={`flex items-start cursor-pointer p-4 sm:p-6 rounded-xl border-2 transition-all ${formData.pickupLocation === '1' ? 'border-green-400 bg-green-50 shadow-md' : 'border-green-200 bg-green-50 hover:border-green-300'}`}>
+                        <input
+                          type="radio"
+                          name="pickupLocation"
+                          value="1"
+                          checked={formData.pickupLocation === '1'}
+                          onChange={handleInputChange}
+                          className="mt-1 mr-4 w-5 h-5 text-brand-yellow focus:ring-brand-yellow"
+                        />
+                        <div className="flex-1">
+                          <div className="flex items-center mb-2">
+                            <i className="fas fa-store text-xl text-green-600 mr-3"></i>
+                            <h4 className="font-bold text-lg text-green-800">Ресторан "ЯБУДУ"</h4>
+                          </div>
+                          <p className="text-gray-700 mb-2">Профессора Малигонова 35</p>
+                          <p className="text-gray-500 text-sm">Пн-Чт 11:00-22:00, Пт-Сб 11:00-23:00, Вс 11:00-22:00</p>
+                        </div>
+                      </label>
+
+                      <label className={`flex items-start cursor-pointer p-4 sm:p-6 rounded-xl border-2 transition-all ${formData.pickupLocation === '2' ? 'border-blue-400 bg-blue-50 shadow-md' : 'border-blue-200 bg-blue-50 hover:border-blue-300'}`}>
+                        <input
+                          type="radio"
+                          name="pickupLocation"
+                          value="2"
+                          checked={formData.pickupLocation === '2'}
+                          onChange={handleInputChange}
+                          className="mt-1 mr-4 w-5 h-5 text-brand-yellow focus:ring-brand-yellow"
+                        />
+                        <div className="flex-1">
+                          <div className="flex items-center mb-2">
+                            <i className="fas fa-store text-xl text-blue-600 mr-3"></i>
+                            <h4 className="font-bold text-lg text-blue-800">Мурата Ахеджака 26</h4>
+                          </div>
+                          <p className="text-gray-700 mb-2">Мурата Ахеджака 26</p>
+                          <p className="text-gray-500 text-sm">Пн-Вс 10:00-22:00</p>
+                        </div>
+                      </label>
+                    </div>
                   </div>
                 )}
 

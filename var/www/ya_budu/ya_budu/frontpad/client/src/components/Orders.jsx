@@ -14,6 +14,145 @@ const getMoscowDate = () => {
   return moment().tz('Europe/Moscow').format('YYYY-MM-DD');
 };
 
+// Компонент для выбора допов
+const AddonSelector = ({ addons, onApply, onCancel }) => {
+  const [selectedAddons, setSelectedAddons] = useState([]);
+
+  const toggleAddon = (addon) => {
+    setSelectedAddons(prev => {
+      const exists = prev.find(a => a.id === addon.id);
+      if (exists) {
+        return prev.filter(a => a.id !== addon.id);
+      } else {
+        return [...prev, {
+          id: addon.addon_template_id || addon.id,
+          name: addon.addon_name || addon.name,
+          price: parseFloat(addon.custom_price || addon.default_price || addon.price || 0),
+          quantity: 1
+        }];
+      }
+    });
+  };
+
+  const updateAddonQuantity = (addonId, quantity) => {
+    if (quantity <= 0) {
+      setSelectedAddons(prev => prev.filter(a => a.id !== addonId));
+    } else {
+      setSelectedAddons(prev => prev.map(a =>
+        a.id === addonId ? { ...a, quantity } : a
+      ));
+    }
+  };
+
+  const totalAddonsPrice = selectedAddons.reduce((sum, addon) => sum + (parseFloat(addon.price || 0) * parseInt(addon.quantity || 1)), 0);
+
+  return (
+    <div>
+      <div style={{ maxHeight: '400px', overflowY: 'auto', marginBottom: '16px' }}>
+        {addons.map(addon => {
+          const isSelected = selectedAddons.some(a => a.id === (addon.addon_template_id || addon.id));
+          const selectedAddon = selectedAddons.find(a => a.id === (addon.addon_template_id || addon.id));
+
+          return (
+            <div
+              key={addon.id}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '12px',
+                border: `1px solid ${isSelected ? '#10b981' : '#e5e7eb'}`,
+                borderRadius: '8px',
+                marginBottom: '8px',
+                background: isSelected ? '#f0fdf4' : 'white',
+                cursor: 'pointer',
+                transition: 'all 0.2s'
+              }}
+              onClick={() => toggleAddon(addon)}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <span style={{ fontWeight: '500' }}>{addon.addon_name || addon.name}</span>
+                {addon.description && (
+                  <span style={{ fontSize: '12px', color: '#6b7280' }}>{addon.description}</span>
+                )}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontWeight: '600', color: '#10b981' }}>
+                  +{(addon.custom_price || addon.default_price || addon.price || 0)} ₽
+                </span>
+
+                {isSelected && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        updateAddonQuantity(selectedAddon.id, selectedAddon.quantity - 1);
+                      }}
+                      style={{ padding: '2px 6px', minWidth: '24px' }}
+                    >
+                      -
+                    </button>
+                    <span style={{ minWidth: '20px', textAlign: 'center' }}>{selectedAddon.quantity}</span>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        updateAddonQuantity(selectedAddon.id, selectedAddon.quantity + 1);
+                      }}
+                      style={{ padding: '2px 6px', minWidth: '24px' }}
+                    >
+                      +
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{
+        borderTop: '1px solid #e5e7eb',
+        paddingTop: '16px',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+      }}>
+        <div>
+          <div style={{ fontSize: '14px', color: '#6b7280' }}>
+            Выбрано допов: {selectedAddons.length}
+          </div>
+          {totalAddonsPrice > 0 && (
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#10b981' }}>
+              Допы: +{totalAddonsPrice} ₽
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={onCancel}
+          >
+            Отмена
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => onApply(selectedAddons)}
+          >
+            Добавить в заказ
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const Orders = () => {
   // Используем DataContext для товаров и категорий (централизованное кэширование)
   const { products, loading: dataLoading, updateProductInCache } = useData();
@@ -36,7 +175,8 @@ const Orders = () => {
     order_type: 'delivery',
     payment: 'cash',
     comment: '',
-    items: []
+    items: [],
+    pickup_location: '1' // ID точки самовывоза по умолчанию
   });
   const [newOrderAlert, setNewOrderAlert] = useState(null);
   const [preorderDates, setPreorderDates] = useState([]);
@@ -50,6 +190,7 @@ const Orders = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedCategories, setExpandedCategories] = useState([]);
   const [sizeModal, setSizeModal] = useState(null);
+  const [addonModal, setAddonModal] = useState(null);
   const [discountModal, setDiscountModal] = useState(null);
   const [discountForm, setDiscountForm] = useState({ amount: 0, type: 'rub', reason: '' });
   const [showCompletedOrders, setShowCompletedOrders] = useState(false); // Сворачивание выполненных заказов
@@ -57,6 +198,22 @@ const Orders = () => {
   const [readyTime, setReadyTime] = useState(''); // Время готовности заказа
   const [couriers, setCouriers] = useState([]); // Список курьеров для назначения
   const [selectedCourierId, setSelectedCourierId] = useState(''); // Выбранный курьер в модалке
+
+  // Пункты самовывоза
+  const pickupLocations = [
+    {
+      id: '1',
+      name: 'Ресторан "ЯБУДУ"',
+      address: 'Профессора Малигонова 35',
+      schedule: 'Пн-Чт 11:00-22:00, Пт-Сб 11:00-23:00, Вс 11:00-22:00'
+    },
+    {
+      id: '2',
+      name: 'Мурата Ахеджака 26',
+      address: 'Мурата Ахеджака 26',
+      schedule: 'Пн-Вс 10:00-22:00'
+    }
+  ];
 
   // Функция для обновления даты в ref и state
   const setDateFilter = (date) => {
@@ -238,6 +395,28 @@ const Orders = () => {
     }
   };
 
+  // Функция для загрузки допов товара
+  const fetchProductAddons = async (productId) => {
+    try {
+      const addonsResponse = await axios.get(`${FRONTPAD_API}/api/products/${productId}/addons`);
+      return addonsResponse.data;
+    } catch (error) {
+      console.error(`Error fetching addons for product ${productId}:`, error);
+      return [];
+    }
+  };
+
+  // Функция для загрузки допов размера
+  const fetchSizeAddons = async (sizeId) => {
+    try {
+      const addonsResponse = await axios.get(`${FRONTPAD_API}/api/sizes/${sizeId}/size-addons`);
+      return addonsResponse.data;
+    } catch (error) {
+      console.error(`Error fetching size addons for size ${sizeId}:`, error);
+      return [];
+    }
+  };
+
   const fetchPreorderDates = async () => {
     try {
       const response = await axios.get(`${FRONTPAD_API}/api/preorder-dates`);
@@ -386,7 +565,8 @@ const Orders = () => {
         payment: formData.payment,
         comment: formData.comment,
         items: formData.items,
-        total_amount
+        total_amount,
+        location_id: formData.order_type === 'pickup' ? parseInt(formData.pickup_location) : null
       });
       setShowModal(false);
       setFormData({
@@ -396,7 +576,8 @@ const Orders = () => {
         order_type: 'delivery',
         payment: 'cash',
         comment: '',
-        items: []
+        items: [],
+        pickup_location: '1'
       });
       // После создания заказа переключаемся на текущую дату
       const currentDate = getMoscowDate();
@@ -435,7 +616,8 @@ const Orders = () => {
         comment: editOrder.comment,
         items: editOrder.items,
         total_amount,
-        status: editOrder.status
+        status: editOrder.status,
+        location_id: editOrder.order_type === 'pickup' ? parseInt(editOrder.location_id) : null
       });
       setEditOrder(null);
       fetchOrders();
@@ -488,113 +670,170 @@ const Orders = () => {
   };
 
   // Функция для показа выбора размера - с ленивой загрузкой размеров
-  const showSizeSelection = async (product) => {
-    // Если размеры уже загружены в продукте, показываем сразу
-    if (product.sizes && product.sizes.length > 0) {
-      setSizeModal(product);
-      return;
-    }
-    
-    // Иначе загружаем размеры лениво
-    const sizes = await fetchProductSizes(product.id);
-    
-    // Обновляем продукт в кэше через DataContext
-    const updatedProduct = { ...product, sizes };
-    updateProductInCache(updatedProduct);
-    
-    // Показываем модалку
-    setSizeModal(updatedProduct);
+  const showSizeSelection = (product) => {
+    // Показываем модалку выбора размера
+    setSizeModal(product);
   };
 
-  const selectSize = (size) => {
+  const selectSize = async (size) => {
     if (!sizeModal) return;
 
+    console.log('[selectSize] Selected size:', size.name, 'for product:', sizeModal.name);
+
+    // После выбора размера всегда проверяем допы товара
+    console.log('[selectSize] Checking product addons for selected size');
+    setSizeModal(null);
+    await checkAndShowProductAddons(sizeModal, size);
+  };
+
+  const addItem = async (product) => {
+    console.log('[addItem] Adding product:', product.id, product.name);
+
+    // Всегда загружаем размеры для товара
+    const sizes = await fetchProductSizes(product.id);
+    console.log('[addItem] Loaded sizes:', sizes);
+
+    if (sizes && sizes.length > 0) {
+      console.log('[addItem] Showing size selection for product with sizes');
+      // Обновляем продукт в кэше с размерами
+      updateProductInCache(product.id, { sizes });
+      // Показываем выбор размера
+      showSizeSelection({ ...product, sizes });
+    } else {
+      console.log('[addItem] No sizes, checking product addons');
+      // Нет размеров - проверяем допы товара
+      await checkAndShowProductAddons(product);
+    }
+  };
+
+  // Отдельная функция для проверки и показа допов товара и размера
+  const checkAndShowProductAddons = async (product, selectedSize = null) => {
+    let allAddons = [];
+
+    // Если выбран размер - сначала добавляем допы размера
+    if (selectedSize) {
+      const sizeAddons = await fetchSizeAddons(selectedSize.id);
+      console.log('[checkAndShowProductAddons] Size addons:', sizeAddons);
+
+      if (sizeAddons && sizeAddons.length > 0) {
+        allAddons = allAddons.concat(sizeAddons.map(addon => ({
+          ...addon,
+          addon_name: addon.name,
+          custom_price: addon.price,
+          is_size_addon: true
+        })));
+      }
+    }
+
+    // Добавляем допы товара
+    const productAddons = await fetchProductAddons(product.id);
+    console.log('[checkAndShowProductAddons] Product addons:', productAddons);
+
+    if (productAddons && productAddons.length > 0) {
+      allAddons = allAddons.concat(productAddons.map(addon => ({
+        ...addon,
+        is_size_addon: false
+      })));
+    }
+
+    console.log('[checkAndShowProductAddons] All addons:', allAddons);
+
+    if (allAddons.length > 0) {
+      console.log('[checkAndShowProductAddons] Showing combined addon selection');
+      setAddonModal({ product, size: selectedSize, addons: allAddons, type: 'combined' });
+    } else {
+      console.log('[checkAndShowProductAddons] No addons, adding directly');
+      // Нет допов - добавляем сразу
+      addItemToOrder(product, [], selectedSize);
+    }
+  };
+
+  // Функция для непосредственного добавления товара в заказ
+  const addItemToOrder = (product, selectedAddons = [], selectedSize = null) => {
     const existingItem = formData.items.find(item =>
-      item.product_id === sizeModal.id && item.size_id === size.id
+      item.product_id === product.id &&
+      (!selectedSize || item.size_id === selectedSize.id) &&
+      JSON.stringify(item.addons || []) === JSON.stringify(selectedAddons || [])
     );
 
     if (existingItem) {
       setFormData({
         ...formData,
         items: formData.items.map(item =>
-          item.product_id === sizeModal.id && item.size_id === size.id
+          item.product_id === product.id &&
+          (!selectedSize || item.size_id === selectedSize.id) &&
+          JSON.stringify(item.addons || []) === JSON.stringify(selectedAddons || [])
             ? { ...item, quantity: item.quantity + 1 }
             : item
         )
       });
     } else {
+      const itemName = selectedSize ? `${product.name} (${selectedSize.name})` : product.name;
+      const itemPrice = parseFloat(selectedSize ? selectedSize.price : product.price) || 0;
+
       setFormData({
         ...formData,
         items: [...formData.items, {
-          product_id: sizeModal.id,
-          product_name: sizeModal.name,
-          name: `${sizeModal.name} (${size.name})`,
-          price: size.price || sizeModal.price,
+          product_id: product.id,
+          product_name: product.name,
+          name: itemName,
+          price: itemPrice,
           quantity: 1,
-          size_id: size.id,
-          size_name: size.name
+          size_id: selectedSize ? selectedSize.id : null,
+          size_name: selectedSize ? selectedSize.name : null,
+          addons: selectedAddons || []
         }]
       });
     }
-
-    setSizeModal(null);
   };
 
-  const addItem = (product) => {
-    // Проверяем, есть ли у товара размеры
-    if (product.sizes && product.sizes.length > 0) {
-      showSizeSelection(product);
-    } else {
-      const existingItem = formData.items.find(item => item.product_id === product.id && !item.size_id);
-      if (existingItem) {
-        setFormData({
-          ...formData,
-          items: formData.items.map(item =>
-            item.product_id === product.id && !item.size_id
-              ? { ...item, quantity: item.quantity + 1 }
-              : item
-          )
-        });
-      } else {
-        setFormData({
-          ...formData,
-          items: [...formData.items, {
-            product_id: product.id,
-            product_name: product.name,
-            name: product.name,
-            price: product.price,
-            quantity: 1
-          }]
-        });
-      }
-    }
-  };
-
-  const removeItem = (productId, sizeId) => {
+  const removeItem = (productId, sizeId, addonIndex) => {
     setFormData({
       ...formData,
-      items: formData.items.filter(item =>
-        sizeId ? (item.product_id !== productId || item.size_id !== sizeId) : (item.product_id !== productId)
-      )
-    });
-  };
-
-  const updateQuantity = (productId, quantity, sizeId) => {
-    if (quantity <= 0) {
-      removeItem(productId, sizeId);
-      return;
-    }
-    setFormData({
-      ...formData,
-      items: formData.items.map(item => {
-        const matchesProduct = item.product_id === productId;
-        const matchesSize = sizeId ? item.size_id === sizeId : !item.size_id;
-        if (matchesProduct && matchesSize) {
-          return { ...item, quantity };
+      items: formData.items.filter((item, index) => {
+        if (addonIndex !== undefined) {
+          // Удаление по индексу в массиве (для товаров с допами)
+          return index !== addonIndex;
         }
-        return item;
+        // Удаление по product_id и size_id
+        return sizeId ? (item.product_id !== productId || item.size_id !== sizeId) : (item.product_id !== productId);
       })
     });
+  };
+
+  const updateQuantity = (productId, quantity, sizeId, addonIndex) => {
+    if (quantity <= 0) {
+      removeItem(productId, sizeId, addonIndex);
+      return;
+    }
+
+    setFormData({
+      ...formData,
+      items: formData.items.map((item, index) => {
+        if (addonIndex !== undefined) {
+          // Обновление по индексу в массиве (для товаров с допами)
+          return index === addonIndex ? { ...item, quantity } : item;
+        } else {
+          // Обновление по product_id и size_id (для товаров без допов)
+          const matchesProduct = item.product_id === productId;
+          const matchesSize = sizeId ? item.size_id === sizeId : !item.size_id;
+          if (matchesProduct && matchesSize) {
+            return { ...item, quantity };
+          }
+          return item;
+        }
+      })
+    });
+  };
+
+  // Применить выбранные допы и добавить товар в заказ
+  const applyAddonsAndAddToOrder = (selectedAddons) => {
+    console.log('[applyAddonsAndAddToOrder] Applying addons:', selectedAddons, 'modal:', addonModal);
+
+    if (!addonModal) return;
+
+    addItemToOrder(addonModal.product, selectedAddons, addonModal.size);
+    setAddonModal(null);
   };
 
   const updateStatus = async (id, status) => {
@@ -843,7 +1082,10 @@ const Orders = () => {
     return badges[status] || status;
   };
 
-  const totalAmount = formData.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const totalAmount = formData.items.reduce((sum, item) => {
+    const addonsPrice = (item.addons || []).reduce((addonSum, addon) => addonSum + (parseFloat(addon.price || 0) * parseInt(addon.quantity || 1)), 0);
+    return sum + ((parseFloat(item.price || 0) + addonsPrice) * parseInt(item.quantity || 1));
+  }, 0);
 
   // Функция для получения времени готовности для отображения на карточке заказа
   // Показываем ready_time (время готовности) если есть, иначе ничего
@@ -1555,6 +1797,7 @@ const Orders = () => {
                 <p style={{ color: '#6b7280', fontSize: '14px' }}>Выберите нужный размер для добавления в заказ</p>
               </div>
               <div style={{ display: 'grid', gap: '12px' }}>
+                {console.log('[SizeModal] Rendering sizes:', sizeModal.sizes)}
                 {sizeModal.sizes.map(size => (
                   <div
                     key={size.id}
@@ -1584,6 +1827,37 @@ const Orders = () => {
                   </div>
                 ))}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Модальное окно выбора допов */}
+      {addonModal && (
+        <div className="modal-overlay" onClick={() => setAddonModal(null)} style={{ zIndex: 10000 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '600px', zIndex: 10001 }}>
+            <div className="modal-header">
+              <h3 className="modal-title">
+                Выберите допы {addonModal.size ? `для ${addonModal.product.name} (${addonModal.size.name})` : `для ${addonModal.product.name}`}
+              </h3>
+              <button className="btn btn-sm btn-secondary" onClick={() => setAddonModal(null)}>
+                <X size={18} />
+              </button>
+            </div>
+            {console.log('[AddonModal] Rendering modal:', addonModal)}
+            <div className="modal-body">
+              <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+                <h4 style={{ marginBottom: '8px' }}>
+                  {addonModal.type === 'size' ? `${addonModal.product.name} (${addonModal.size.name})` : addonModal.product.name}
+                </h4>
+                <p style={{ color: '#6b7280', fontSize: '14px' }}>Выберите дополнительные ингредиенты</p>
+              </div>
+
+              <AddonSelector
+                addons={addonModal.addons}
+                onApply={applyAddonsAndAddToOrder}
+                onCancel={() => setAddonModal(null)}
+              />
             </div>
           </div>
         </div>
@@ -1657,6 +1931,56 @@ const Orders = () => {
                     </select>
                   </div>
                 </div>
+
+                {/* Выбор пункта самовывоза */}
+                {formData.order_type === 'pickup' && (
+                  <div className="form-group">
+                    <label className="form-label">Пункт самовывоза</label>
+                    <div style={{ display: 'grid', gap: '12px' }}>
+                      {pickupLocations.map(location => (
+                        <div
+                          key={location.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            padding: '16px',
+                            border: `2px solid ${formData.pickup_location === location.id ? '#10b981' : '#e5e7eb'}`,
+                            borderRadius: '12px',
+                            background: formData.pickup_location === location.id ? '#f0fdf4' : 'white',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s'
+                          }}
+                          onClick={() => setFormData({...formData, pickup_location: location.id})}
+                        >
+                          <div style={{ marginRight: '12px', marginTop: '2px' }}>
+                            <div style={{
+                              width: '20px',
+                              height: '20px',
+                              borderRadius: '50%',
+                              border: `2px solid ${formData.pickup_location === location.id ? '#10b981' : '#d1d5db'}`,
+                              background: formData.pickup_location === location.id ? '#10b981' : 'white',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}>
+                              {formData.pickup_location === location.id && (
+                                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'white' }}></div>
+                              )}
+                            </div>
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: '600', marginBottom: '4px' }}>{location.name}</div>
+                            <div style={{ color: '#6b7280', fontSize: '14px', marginBottom: '2px' }}>{location.address}</div>
+                            <div style={{ color: '#9ca3af', fontSize: '12px' }}>{location.schedule}</div>
+                          </div>
+                          <div style={{ marginLeft: '12px' }}>
+                            <i className="fas fa-store text-xl text-green-600"></i>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="form-group">
                   <label className="form-label">Товары</label>
@@ -1770,56 +2094,71 @@ const Orders = () => {
                       <div style={{ fontWeight: '600', fontSize: '13px', marginBottom: '8px', color: '#166534' }}>
                         Выбрано товаров: {formData.items.length} на сумму {totalAmount} ₽
                       </div>
-                      {formData.items.map((item, idx) => (
-                        <div
-                          key={`${item.product_id}-${item.size_id || 'nosize'}-${idx}`}
-                          style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            padding: '6px 10px',
-                            background: 'white',
-                            borderRadius: '4px',
-                            marginBottom: '4px'
-                          }}
-                        >
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
-                            <span style={{ fontSize: '13px' }}>{item.name}</span>
-                            <span style={{ fontSize: '11px', color: '#6b7280' }}>
-                              {item.price} ₽ × {item.quantity} шт.
-                            </span>
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      {formData.items.map((item, idx) => {
+                        const addonsPrice = (item.addons || []).reduce((sum, addon) => sum + (parseFloat(addon.price || 0) * parseInt(addon.quantity || 1)), 0);
+                        const totalItemPrice = (parseFloat(item.price || 0) + addonsPrice) * parseInt(item.quantity || 1);
+
+                        return (
+                          <div
+                            key={`${item.product_id}-${item.size_id || 'nosize'}-${JSON.stringify(item.addons || [])}-${idx}`}
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              padding: '6px 10px',
+                              background: 'white',
+                              borderRadius: '4px',
+                              marginBottom: '4px'
+                            }}
+                          >
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0', flex: 1 }}>
+                              <span style={{ fontSize: '13px' }}>{item.name}</span>
+                              <span style={{ fontSize: '11px', color: '#6b7280' }}>
+                                {item.price} ₽ × {item.quantity} шт.
+                                {addonsPrice > 0 && ` + допы ${addonsPrice} ₽`}
+                              </span>
+                              {/* Отображение допов */}
+                              {item.addons && item.addons.length > 0 && (
+                                <div style={{ fontSize: '10px', color: '#6b7280', marginTop: '2px' }}>
+                                  Допы: {item.addons.map(addon => `${addon.name} (${addon.price} ₽)`).join(', ')}
+                                </div>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ fontWeight: '600', fontSize: '13px', minWidth: '50px', textAlign: 'right' }}>
+                                {totalItemPrice} ₽
+                              </span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <button
+                                  type="button"
+                                  className="btn btn-sm"
+                                  onClick={() => updateQuantity(item.product_id, item.quantity - 1, item.size_id, idx)}
+                                  style={{ padding: '2px 6px', minWidth: '24px' }}
+                                >
+                                  -
+                                </button>
+                                <span style={{ fontSize: '13px', minWidth: '20px', textAlign: 'center' }}>{item.quantity}</span>
+                                <button
+                                  type="button"
+                                  className="btn btn-sm"
+                                  onClick={() => updateQuantity(item.product_id, item.quantity + 1, item.size_id, idx)}
+                                  style={{ padding: '2px 8px', minWidth: '24px' }}
+                                >
+                                  +
+                                </button>
+                              </div>
                               <button
                                 type="button"
-                                className="btn btn-sm"
-                                onClick={() => updateQuantity(item.product_id, item.quantity - 1, item.size_id)}
-                                style={{ padding: '2px 6px', minWidth: '24px' }}
+                                className="btn btn-sm btn-danger"
+                                onClick={() => removeItem(item.product_id, item.size_id, idx)}
+                                style={{ padding: '2px 6px' }}
                               >
-                                -
-                              </button>
-                              <span style={{ fontSize: '13px', minWidth: '20px', textAlign: 'center' }}>{item.quantity}</span>
-                              <button
-                                type="button"
-                                className="btn btn-sm"
-                                onClick={() => updateQuantity(item.product_id, item.quantity + 1, item.size_id)}
-                                style={{ padding: '2px 6px', minWidth: '24px' }}
-                              >
-                                +
+                                <X size={14} />
                               </button>
                             </div>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-danger"
-                              onClick={() => removeItem(item.product_id, item.size_id)}
-                              style={{ padding: '2px 6px' }}
-                            >
-                              <X size={14} />
-                            </button>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -1950,6 +2289,57 @@ const Orders = () => {
                     </select>
                   </div>
                 </div>
+
+                {/* Выбор пункта самовывоза в редактировании */}
+                {editOrder.order_type === 'pickup' && (
+                  <div className="form-group">
+                    <label className="form-label">Пункт самовывоза</label>
+                    <div style={{ display: 'grid', gap: '12px' }}>
+                      {pickupLocations.map(location => (
+                        <div
+                          key={location.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            padding: '16px',
+                            border: `2px solid ${editOrder.location_id == location.id ? '#10b981' : '#e5e7eb'}`,
+                            borderRadius: '12px',
+                            background: editOrder.location_id == location.id ? '#f0fdf4' : 'white',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s'
+                          }}
+                          onClick={() => setEditOrder({...editOrder, location_id: location.id})}
+                        >
+                          <div style={{ marginRight: '12px', marginTop: '2px' }}>
+                            <div style={{
+                              width: '20px',
+                              height: '20px',
+                              borderRadius: '50%',
+                              border: `2px solid ${editOrder.location_id == location.id ? '#10b981' : '#d1d5db'}`,
+                              background: editOrder.location_id == location.id ? '#10b981' : 'white',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}>
+                              {editOrder.location_id == location.id && (
+                                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'white' }}></div>
+                              )}
+                            </div>
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: '600', marginBottom: '4px' }}>{location.name}</div>
+                            <div style={{ color: '#6b7280', fontSize: '14px', marginBottom: '2px' }}>{location.address}</div>
+                            <div style={{ color: '#9ca3af', fontSize: '12px' }}>{location.schedule}</div>
+                          </div>
+                          <div style={{ marginLeft: '12px' }}>
+                            <i className="fas fa-store text-xl text-green-600"></i>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="form-group">
                   <label className="form-label">Статус заказа</label>
                   <select

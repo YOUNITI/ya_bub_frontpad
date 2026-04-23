@@ -150,9 +150,11 @@ app.use('/service-worker.js', (req, res, next) => {
 // Раздача статических файлов из dist (Vite build)
 // Используем __dirname для абсолютных путей
 const distPath = path.join(__dirname, 'dist');
+const staticPath = path.join(__dirname, 'static');
 const uploadsPath = path.join(__dirname, 'uploads');
 const rootPath = __dirname;
 
+app.use(express.static(staticPath)); // Сначала static
 app.use(express.static(distPath));
 app.use(express.static(rootPath));
 app.use('/uploads', express.static(uploadsPath));
@@ -1280,6 +1282,29 @@ app.post('/api/orders', async (req, res) => {
       console.log(`[SYNC] Начинаем синхронизацию заказа ${orderNumber} с Frontpad: ${FRONTPAD_URL}`);
       console.log(`[SYNC] Используем токен: ${String(syncToken).substring(0, 5)}...`);
       
+      // ✅ Получаем point_id для выбранного района
+      let orderPointId = 1; // по умолчанию точка 1
+      if (zone_id) {
+        try {
+          // Запрашиваем у Frontpad информацию о районе чтобы получить его point_id
+          const zoneResponse = await fetch(`${FRONTPAD_URL}/api/delivery-zones/${zone_id}`, {
+            headers: {
+              'X-Sync-Token': syncToken
+            }
+          });
+          
+          if (zoneResponse.ok) {
+            const zoneData = await zoneResponse.json();
+            if (zoneData && zoneData.point_id) {
+              orderPointId = zoneData.point_id;
+              console.log(`[SYNC] Район ${zone_id} относится к точке ${orderPointId}`);
+            }
+          }
+        } catch (zoneErr) {
+          console.log('[SYNC] Не удалось получить point_id для района, используем по умолчанию');
+        }
+      }
+      
       const syncData = {
         order_id: orderId,
         order_number: orderNumber,
@@ -1307,7 +1332,8 @@ app.post('/api/orders', async (req, res) => {
         delivery_price: delivery_price || 0,
         zone_name: zone_name || null,
         status: 'pending',
-        created_at: getMoscowTime()
+        created_at: getMoscowTime(),
+        point_id: orderPointId // ✅ Распределение заказа по точкам
       };
       
       console.log('[SYNC] Данные для синхронизации:', JSON.stringify(syncData, null, 2));
@@ -1981,7 +2007,7 @@ app.get('/api/admin/delivery-zones', authenticateToken, requireAdmin, async (req
 
 // Создать район доставки (админ) - перенаправляем на Frontpad
 app.post('/api/admin/delivery-zones', authenticateToken, requireAdmin, async (req, res) => {
-  const { name, min_order_amount, delivery_price, is_active, sort_order } = req.body;
+  const { name, min_order_amount, delivery_price, is_active, sort_order, point_id } = req.body;
   try {
     const syncToken = process.env.SITE_SYNC_TOKEN || 'D&AM!ecjdH6g';
     const response = await fetch(`${FRONTPAD_URL}/api/delivery-zones`, {
@@ -1995,7 +2021,8 @@ app.post('/api/admin/delivery-zones', authenticateToken, requireAdmin, async (re
         min_order_amount: min_order_amount || 0,
         delivery_price: delivery_price || 0,
         is_active: is_active !== undefined ? is_active : true,
-        sort_order: sort_order || 0
+        sort_order: sort_order || 0,
+        point_id: point_id || 1
       })
     });
     
@@ -2016,7 +2043,7 @@ app.post('/api/admin/delivery-zones', authenticateToken, requireAdmin, async (re
 // Обновить район доставки (админ) - перенаправляем на Frontpad
 app.put('/api/admin/delivery-zones/:id', authenticateToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const { name, min_order_amount, delivery_price, is_active, sort_order } = req.body;
+  const { name, min_order_amount, delivery_price, is_active, sort_order, point_id } = req.body;
   try {
     const syncToken = process.env.SITE_SYNC_TOKEN || 'D&AM!ecjdH6g';
     const response = await fetch(`${FRONTPAD_URL}/api/delivery-zones/${id}`, {
@@ -2030,7 +2057,8 @@ app.put('/api/admin/delivery-zones/:id', authenticateToken, requireAdmin, async 
         min_order_amount: min_order_amount || 0,
         delivery_price: delivery_price || 0,
         is_active: is_active !== undefined ? is_active : true,
-        sort_order: sort_order || 0
+        sort_order: sort_order || 0,
+        point_id
       })
     });
     
@@ -2044,6 +2072,28 @@ app.put('/api/admin/delivery-zones/:id', authenticateToken, requireAdmin, async 
     }
   } catch (err) {
     console.error('Ошибка обновления района доставки:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// Получить район доставки по ID
+app.get('/api/delivery-zones/:id', async (req, res) => {
+  try {
+    const syncToken = process.env.SITE_SYNC_TOKEN || 'D&AM!ecjdH6g';
+    const response = await fetch(`${FRONTPAD_URL}/api/delivery-zones/${req.params.id}`, {
+      headers: {
+        'X-Sync-Token': syncToken
+      }
+    });
+    
+    if (response.ok) {
+      const zone = await response.json();
+      res.json(zone);
+    } else {
+      res.status(response.status).json({ error: 'Район не найден' });
+    }
+  } catch (err) {
+    console.error('Ошибка получения района доставки:', err);
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });

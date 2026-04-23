@@ -309,16 +309,6 @@ function setupDeliveryTime() {
 
 // Инициализация страницы
 function initOrderPage() {
-    console.log('[initOrderPage] Initializing order page');
-
-    // Проверяем, что HTML содержит обе точки самовывоза
-    const pickupCards = document.querySelectorAll('.pickup-location-card');
-    console.log('[initOrderPage] Found pickup location cards:', pickupCards.length);
-
-    pickupCards.forEach((card, index) => {
-        console.log(`[initOrderPage] Card ${index}:`, card.textContent.substring(0, 50) + '...');
-    });
-
     // Загружаем товары из корзины
     loadCartItems();
 
@@ -333,8 +323,6 @@ function initOrderPage() {
 
     // Обновляем год в футере
     document.getElementById('currentYear').textContent = new Date().getFullYear();
-
-    console.log('[initOrderPage] Order page initialized');
 }
 
 // Запускаем инициализацию при загрузке страницы

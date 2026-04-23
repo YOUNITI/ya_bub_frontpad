@@ -116,7 +116,6 @@
                          <!-- Тип заказа -->
                          <div>
                              <h3 class="text-2xl font-bold mb-6 font-heading">Тип заказа</h3>
-                             <p class="text-gray-600 mb-4">Выберите способ получения заказа:</p>
                              <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                  <div class="order-type-card delivery bg-white border-2 border-brand-yellow rounded-xl p-4 cursor-pointer transition-all hover:shadow-md">
                                      <label class="flex items-center cursor-pointer">
@@ -183,47 +182,38 @@
                              </div>
                          </div>
 
-                         <!-- Пункт самовывоза -->
-                         <div id="pickupLocationSection" class="hidden">
-                             <h3 class="text-2xl font-bold mb-6 font-heading">Пункт самовывоза</h3>
-                             <p class="text-gray-600 mb-6">Выберите удобный для вас пункт самовывоза:</p>
-                             <div class="bg-yellow-50 border border-yellow-200 p-4 rounded-lg mb-6">
-                                 <p class="text-yellow-800 text-sm"><strong>💡 Подсказка:</strong> Вы можете выбрать один из двух пунктов самовывоза. Заказ будет готов к выдаче в выбранном месте.</p>
-                             </div>
+                          <!-- Пункт самовывоза -->
+                          <div id="pickupLocationSection" class="hidden">
+                              <h3 class="text-2xl font-bold mb-6 font-heading">Пункт самовывоза</h3>
+                              <p class="text-gray-600 mb-6">Выберите удобный для вас пункт самовывоза:</p>
                               <div class="space-y-4">
-                                   <!-- Первая точка самовывоза -->
-                                   <div class="pickup-location-card bg-green-50 border-2 border-green-200 p-6 rounded-xl cursor-pointer transition-all hover:shadow-md" onclick="document.querySelector('input[name=pickupLocation][value=1]').checked=true;">
-                                       <label class="flex items-start cursor-pointer">
-                                           <input type="radio" name="pickupLocation" value="1" class="mt-1 mr-4 w-5 h-5 text-brand-yellow focus:ring-brand-yellow" checked>
-                                           <div class="flex-1">
-                                               <div class="flex items-center mb-2">
-                                                   <i class="fas fa-store text-xl text-green-600 mr-3"></i>
-                                                   <h4 class="font-bold text-lg text-green-800">Ресторан "ЯБУДУ"</h4>
-                                               </div>
-                                               <p class="text-gray-700 mb-2">Профессора Малигонова 35</p>
-                                               <p class="text-gray-500 text-sm">Пн-Чт 11:00-22:00, Пт-Сб 11:00-23:00, Вс 11:00-22:00</p>
-                                           </div>
-                                       </label>
-                                   </div>
+                                  <div class="pickup-location-card bg-green-50 border-2 border-green-200 p-6 rounded-xl cursor-pointer transition-all hover:shadow-md" onclick="document.querySelector('input[name=pickupLocation][value=1]').checked=true;">
+                                      <label class="flex items-start cursor-pointer">
+                                          <input type="radio" name="pickupLocation" value="1" class="mt-1 mr-4 w-5 h-5 text-brand-yellow focus:ring-brand-yellow" checked>
+                                          <div class="flex-1">
+                                              <div class="flex items-center mb-2">
+                                                  <i class="fas fa-store text-xl text-green-600 mr-3"></i>
+                                                  <h4 class="font-bold text-lg text-green-800">Ресторан "ЯБУДУ"</h4>
+                                              </div>
+                                              <p class="text-gray-700 mb-2">Профессора Малигонова 35</p>
+                                              <p class="text-gray-500 text-sm">Пн-Чт 11:00-22:00, Пт-Сб 11:00-23:00, Вс 11:00-22:00</p>
+                                          </div>
+                                      </label>
+                                  </div>
 
-                                   <!-- DEBUG: Вторая точка самовывоза -->
-                                   <div style="border: 2px solid red; padding: 10px; margin: 10px 0; background: yellow;">
-                                       DEBUG: Это вторая точка самовывоза
-                                   </div>
-
-                                   <div class="pickup-location-card bg-blue-50 border-2 border-blue-200 p-6 rounded-xl cursor-pointer transition-all hover:shadow-md hover:border-blue-400" onclick="document.querySelector('input[name=pickupLocation][value=2]').checked=true;">
-                                       <label class="flex items-start cursor-pointer">
-                                           <input type="radio" name="pickupLocation" value="2" class="mt-1 mr-4 w-5 h-5 text-brand-yellow focus:ring-brand-yellow">
-                                           <div class="flex-1">
-                                               <div class="flex items-center mb-2">
-                                                   <i class="fas fa-store text-xl text-blue-600 mr-3"></i>
-                                                   <h4 class="font-bold text-lg text-blue-800">Мурата Ахеджака 26</h4>
-                                               </div>
-                                               <p class="text-gray-700 mb-2">Мурата Ахеджака 26</p>
-                                               <p class="text-gray-500 text-sm">Пн-Вс 10:00-22:00</p>
-                                           </div>
-                                       </label>
-                                   </div>
+                                  <div class="pickup-location-card bg-blue-50 border-2 border-blue-200 p-6 rounded-xl cursor-pointer transition-all hover:shadow-md hover:border-blue-400" onclick="document.querySelector('input[name=pickupLocation][value=2]').checked=true;">
+                                      <label class="flex items-start cursor-pointer">
+                                          <input type="radio" name="pickupLocation" value="2" class="mt-1 mr-4 w-5 h-5 text-brand-yellow focus:ring-brand-yellow">
+                                          <div class="flex-1">
+                                              <div class="flex items-center mb-2">
+                                                  <i class="fas fa-store text-xl text-blue-600 mr-3"></i>
+                                                  <h4 class="font-bold text-lg text-blue-800">Мурата Ахеджака 26</h4>
+                                              </div>
+                                              <p class="text-gray-700 mb-2">Мурата Ахеджака 26</p>
+                                              <p class="text-gray-500 text-sm">Пн-Вс 10:00-22:00</p>
+                                          </div>
+                                      </label>
+                                  </div>
                              </div>
                          </div>
 
@@ -347,50 +337,6 @@
     </footer>
 
     <!-- JavaScript -->
-    <script>
-        // Проверяем, что HTML загружен правильно
-        console.log('[PAGE_LOAD] Script loaded, checking HTML...');
-
-        // Проверяем сразу при загрузке скрипта
-        const pickupCardsImmediate = document.querySelectorAll('.pickup-location-card');
-        console.log('[IMMEDIATE] Found pickup cards before DOMContentLoaded:', pickupCardsImmediate.length);
-
-        document.addEventListener('DOMContentLoaded', function() {
-            console.log('[PAGE_LOAD] DOMContentLoaded fired');
-            const pickupCards = document.querySelectorAll('.pickup-location-card');
-            console.log('[PAGE_LOAD] Found pickup cards:', pickupCards.length);
-
-            // Проверяем HTML контент
-            const pickupSection = document.getElementById('pickupLocationSection');
-            if (pickupSection) {
-                console.log('[PAGE_LOAD] Pickup section HTML:', pickupSection.innerHTML.substring(0, 500) + '...');
-                console.log('[PAGE_LOAD] Pickup section display:', getComputedStyle(pickupSection).display);
-            }
-
-            pickupCards.forEach((card, index) => {
-                console.log(`[PAGE_LOAD] Card ${index} exists:`, !!card);
-                console.log(`[PAGE_LOAD] Card ${index} HTML:`, card ? card.outerHTML.substring(0, 200) + '...' : 'null');
-                console.log(`[PAGE_LOAD] Card ${index} visible:`, card ? card.offsetParent !== null : 'null');
-                console.log(`[PAGE_LOAD] Card ${index} display:`, card ? getComputedStyle(card).display : 'null');
-            });
-
-            // Проверяем, есть ли элементы с определенными классами
-            const allDivs = document.querySelectorAll('div');
-            let greenCards = 0, blueCards = 0;
-            allDivs.forEach(div => {
-                if (div.classList.contains('bg-green-50')) greenCards++;
-                if (div.classList.contains('bg-blue-50')) blueCards++;
-            });
-            console.log('[PAGE_LOAD] Green background cards:', greenCards);
-            console.log('[PAGE_LOAD] Blue background cards:', blueCards);
-        });
-
-        // Проверяем каждые 2 секунды
-        setInterval(() => {
-            const pickupCards = document.querySelectorAll('.pickup-location-card');
-            console.log('[INTERVAL] Current pickup cards count:', pickupCards.length);
-        }, 2000);
-    </script>
     <script src="order.js"></script>
     <script>
         // Мобильное меню
