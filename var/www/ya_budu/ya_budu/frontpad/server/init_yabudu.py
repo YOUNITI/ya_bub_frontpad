@@ -66,7 +66,7 @@ else:
         product_id INTEGER NOT NULL,
         name TEXT NOT NULL,
         size_value TEXT,
-        price_modifier REAL DEFAULT 0,
+        price REAL DEFAULT 0,
         sort_order INTEGER DEFAULT 0,
         is_default INTEGER DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

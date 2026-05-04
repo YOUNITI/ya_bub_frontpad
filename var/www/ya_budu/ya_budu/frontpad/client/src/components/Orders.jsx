@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Plus, Eye, Trash2, X, Printer, RotateCcw, Bell, Calendar, Edit2, History, Star, Percent, Check } from 'lucide-react';
 import moment from 'moment-timezone';
 import { useData } from '../context/DataContext';
+import { useAuth } from '../context/AuthContext';
 import { playNotificationSound } from './SoundNotification';
 
 // API и WebSocket URL - относительные пути для работы через nginx
@@ -156,6 +157,7 @@ const AddonSelector = ({ addons, onApply, onCancel }) => {
 const Orders = () => {
   // Используем DataContext для товаров и категорий (централизованное кэширование)
   const { products, loading: dataLoading, updateProductInCache } = useData();
+  const { user } = useAuth();
   
   const [orders, setOrders] = useState([]);
   const [preorders, setPreorders] = useState([]);
@@ -163,6 +165,7 @@ const Orders = () => {
   const [showModal, setShowModal] = useState(false);
   const [showDetails, setShowDetails] = useState(null);
   const [editOrder, setEditOrder] = useState(null);
+  const [showProductModal, setShowProductModal] = useState(false);
   const [filter, setFilter] = useState('all');
   // Используем useRef для хранения даты чтобы избежать race condition
   const dateFilterRef = useRef(getMoscowDate());
@@ -193,11 +196,12 @@ const Orders = () => {
   const [addonModal, setAddonModal] = useState(null);
   const [discountModal, setDiscountModal] = useState(null);
   const [discountForm, setDiscountForm] = useState({ amount: 0, type: 'rub', reason: '' });
-  const [showCompletedOrders, setShowCompletedOrders] = useState(false); // Сворачивание выполненных заказов
-  const [acceptModal, setAcceptModal] = useState(null); // Модальное окно принятия заказа с time picker
-  const [readyTime, setReadyTime] = useState(''); // Время готовности заказа
-  const [couriers, setCouriers] = useState([]); // Список курьеров для назначения
-  const [selectedCourierId, setSelectedCourierId] = useState(''); // Выбранный курьер в модалке
+  const [showCompletedOrders, setShowCompletedOrders] = useState(false);
+  const [acceptModal, setAcceptModal] = useState(null);
+  const [readyTime, setReadyTime] = useState('');
+  const [couriers, setCouriers] = useState([]);
+  const [selectedCourierId, setSelectedCourierId] = useState('');
+  const currentPointId = user?.point_id || 1;
 
   // Пункты самовывоза
   const pickupLocations = [
@@ -263,6 +267,11 @@ const Orders = () => {
           // Это предотвращает race condition с локальным обновлением
           fetchOrdersWithDate(dateFilterRef.current);
           fetchPreorderDates();
+
+          // Если пользователь находится в режиме просмотра предзаказов, обновляем их список
+          if (showPreorders && currentPreorderDate) {
+            fetchPreordersForDate(currentPreorderDate);
+          }
           break;
         case 'order_deleted':
           // Просто обновляем список заказов на текущей дате
@@ -348,7 +357,6 @@ const Orders = () => {
         const response = await axios.get(`${FRONTPAD_API}/api/preorders/${dateParam}?_t=${cacheBuster}`);
         setOrders(response.data || []);
       } else {
-        // Для всех остальных дат - обычные заказы
         const params = { date: dateParam, _t: cacheBuster };
         console.log('[fetchOrders] Отправка запроса с params:', params);
         
@@ -566,7 +574,7 @@ const Orders = () => {
         comment: formData.comment,
         items: formData.items,
         total_amount,
-        location_id: formData.order_type === 'pickup' ? parseInt(formData.pickup_location) : null
+        point_id: currentPointId
       });
       setShowModal(false);
       setFormData({
@@ -617,7 +625,8 @@ const Orders = () => {
         items: editOrder.items,
         total_amount,
         status: editOrder.status,
-        location_id: editOrder.order_type === 'pickup' ? parseInt(editOrder.location_id) : null
+        location_id: editOrder.order_type === 'pickup' ? parseInt(editOrder.location_id) : null,
+        point_id: currentPointId
       });
       setEditOrder(null);
       fetchOrders();
@@ -670,9 +679,9 @@ const Orders = () => {
   };
 
   // Функция для показа выбора размера - с ленивой загрузкой размеров
-  const showSizeSelection = (product) => {
+  const showSizeSelection = (product, isEditing = false) => {
     // Показываем модалку выбора размера
-    setSizeModal(product);
+    setSizeModal({ ...product, isEditing });
   };
 
   const selectSize = async (size) => {
@@ -682,8 +691,9 @@ const Orders = () => {
 
     // После выбора размера всегда проверяем допы товара
     console.log('[selectSize] Checking product addons for selected size');
+    const isEditing = sizeModal.isEditing;
     setSizeModal(null);
-    await checkAndShowProductAddons(sizeModal, size);
+    await checkAndShowProductAddons(sizeModal, size, isEditing);
   };
 
   const addItem = async (product) => {
@@ -707,7 +717,7 @@ const Orders = () => {
   };
 
   // Отдельная функция для проверки и показа допов товара и размера
-  const checkAndShowProductAddons = async (product, selectedSize = null) => {
+  const checkAndShowProductAddons = async (product, selectedSize = null, isEditing = false) => {
     let allAddons = [];
 
     // Если выбран размер - сначала добавляем допы размера
@@ -740,26 +750,29 @@ const Orders = () => {
 
     if (allAddons.length > 0) {
       console.log('[checkAndShowProductAddons] Showing combined addon selection');
-      setAddonModal({ product, size: selectedSize, addons: allAddons, type: 'combined' });
+      setAddonModal({ product, size: selectedSize, addons: allAddons, type: 'combined', isEditing });
     } else {
       console.log('[checkAndShowProductAddons] No addons, adding directly');
       // Нет допов - добавляем сразу
-      addItemToOrder(product, [], selectedSize);
+      addItemToOrder(product, [], selectedSize, isEditing);
     }
   };
 
   // Функция для непосредственного добавления товара в заказ
-  const addItemToOrder = (product, selectedAddons = [], selectedSize = null) => {
-    const existingItem = formData.items.find(item =>
+  const addItemToOrder = (product, selectedAddons = [], selectedSize = null, isEditing = false) => {
+    const currentData = isEditing ? editOrder : formData;
+    const setCurrentData = isEditing ? setEditOrder : setFormData;
+
+    const existingItem = currentData.items.find(item =>
       item.product_id === product.id &&
       (!selectedSize || item.size_id === selectedSize.id) &&
       JSON.stringify(item.addons || []) === JSON.stringify(selectedAddons || [])
     );
 
     if (existingItem) {
-      setFormData({
-        ...formData,
-        items: formData.items.map(item =>
+      setCurrentData({
+        ...currentData,
+        items: currentData.items.map(item =>
           item.product_id === product.id &&
           (!selectedSize || item.size_id === selectedSize.id) &&
           JSON.stringify(item.addons || []) === JSON.stringify(selectedAddons || [])
@@ -771,9 +784,9 @@ const Orders = () => {
       const itemName = selectedSize ? `${product.name} (${selectedSize.name})` : product.name;
       const itemPrice = parseFloat(selectedSize ? selectedSize.price : product.price) || 0;
 
-      setFormData({
-        ...formData,
-        items: [...formData.items, {
+      setCurrentData({
+        ...currentData,
+        items: [...currentData.items, {
           product_id: product.id,
           product_name: product.name,
           name: itemName,
@@ -832,7 +845,7 @@ const Orders = () => {
 
     if (!addonModal) return;
 
-    addItemToOrder(addonModal.product, selectedAddons, addonModal.size);
+    addItemToOrder(addonModal.product, selectedAddons, addonModal.size, addonModal.isEditing);
     setAddonModal(null);
   };
 
@@ -1137,26 +1150,27 @@ const Orders = () => {
   };
 
   // Добавить товар в редактируемый заказ
-  const addItemToEdit = (product) => {
+  const addItemToEdit = async (product) => {
     if (!editOrder) return;
-    const existingItem = editOrder.items.find(item => item.product_id === product.id);
-    let newItems;
-    if (existingItem) {
-      newItems = editOrder.items.map(item =>
-        item.product_id === product.id
-          ? { ...item, quantity: item.quantity + 1 }
-          : item
-      );
+
+    // Используем ту же логику, что и при создании заказа
+    console.log('[addItemToEdit] Adding product to edit order:', product.id, product.name);
+
+    // Всегда загружаем размеры для товара
+    const sizes = await fetchProductSizes(product.id);
+    console.log('[addItemToEdit] Loaded sizes:', sizes);
+
+    if (sizes && sizes.length > 0) {
+      console.log('[addItemToEdit] Showing size selection for product with sizes');
+      // Обновляем продукт в кэше с размерами
+      updateProductInCache(product.id, { sizes });
+      // Показываем выбор размера
+      showSizeSelection({ ...product, sizes }, true); // true = редактирование
     } else {
-      newItems = [...editOrder.items, {
-        product_id: product.id,
-        product_name: product.name,
-        name: product.name,
-        price: product.price,
-        quantity: 1
-      }];
+      console.log('[addItemToEdit] No sizes, checking product addons');
+      // Нет размеров - проверяем допы товара
+      await checkAndShowProductAddons(product, null, true); // true = редактирование
     }
-    setEditOrder({ ...editOrder, items: newItems });
   };
 
   const removeItemFromEdit = (productId) => {
@@ -1242,6 +1256,14 @@ const Orders = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <h2 style={{ fontSize: '28px' }}>Заказы</h2>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#f3f4f6', padding: '8px 12px', borderRadius: '8px' }}>
+            <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: '500' }}>Точка:</span>
+            <span style={{ fontSize: '13px', fontWeight: '600', color: '#374151' }}>
+              {pickupLocations.find(p => p.id === currentPointId.toString())?.name || `Точка ${currentPointId}`}
+            </span>
+          </div>
+          
           {console.log('[RENDER] preorderDates.length:', preorderDates.length, 'orders with is_asap=0:', orders.filter(o => o.is_asap === 0).length)}
           {(preorderDates.length > 0 || orders.some(order => order.is_asap === 0)) && (
             <div 
@@ -2425,7 +2447,17 @@ const Orders = () => {
                 
                 {/* Список товаров в заказе */}
                 <div style={{ marginTop: '16px' }}>
-                  <div style={{ fontWeight: '600', marginBottom: '12px' }}>Товары в заказе:</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <div style={{ fontWeight: '600' }}>Товары в заказе:</div>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={() => setShowProductModal(true)}
+                    >
+                      <Plus size={14} />
+                      Добавить товар
+                    </button>
+                  </div>
                   <div style={{ display: 'grid', gap: '8px' }}>
                     {editOrder.items && editOrder.items.map((item, idx) => (
                       <div
@@ -2983,6 +3015,110 @@ const Orders = () => {
               >
                 <Check size={16} /> Принять заказ
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Модальное окно выбора товаров для редактирования */}
+      {showProductModal && editOrder && (
+        <div className="modal-overlay" onClick={() => setShowProductModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px', width: '90%', maxHeight: '90vh' }}>
+            <div className="modal-header">
+              <h3 className="modal-title">Добавить товар в заказ</h3>
+              <button className="btn btn-sm btn-secondary" onClick={() => setShowProductModal(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="modal-body" style={{ maxHeight: 'calc(90vh - 120px)', overflowY: 'auto' }}>
+              {/* Поиск товаров */}
+              <div style={{ marginBottom: '16px' }}>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Поиск товаров..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  style={{ padding: '10px 16px', fontSize: '14px' }}
+                />
+              </div>
+
+              {/* Список категорий и товаров */}
+              <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '10px' }}>
+                {Object.keys(filteredGroupedProducts).map(category => (
+                  <div key={category} style={{ marginBottom: '8px' }}>
+                    {/* Заголовок категории с кнопкой разворачивания */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        padding: '8px 12px',
+                        background: '#f3f4f6',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        marginBottom: '4px'
+                      }}
+                      onClick={() => toggleCategory(category)}
+                    >
+                      <div style={{ fontWeight: '600', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {expandedCategories.includes(category) ? '▼' : '▶'} {category}
+                      </div>
+                      <span style={{ fontSize: '12px', color: '#6b7280' }}>{filteredGroupedProducts[category].length} шт.</span>
+                    </div>
+
+                    {/* Товары категории */}
+                    {expandedCategories.includes(category) && (
+                      <div style={{ paddingLeft: '16px' }}>
+                        {filteredGroupedProducts[category].map(product => (
+                          <div
+                            key={product.id}
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              padding: '8px 12px',
+                              marginBottom: '4px',
+                              border: '1px solid #e5e7eb',
+                              borderRadius: '6px',
+                              cursor: 'pointer',
+                              transition: 'background-color 0.2s'
+                            }}
+                            onClick={() => {
+                              addItemToEdit(product);
+                              setShowProductModal(false);
+                            }}
+                            onMouseEnter={(e) => e.target.style.backgroundColor = '#f9fafb'}
+                            onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+                          >
+                            <div>
+                              <div style={{ fontWeight: '500', marginBottom: '2px' }}>{product.name}</div>
+                              <div style={{ fontSize: '12px', color: '#6b7280' }}>{product.price} ₽</div>
+                            </div>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-success"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                addItemToEdit(product);
+                                setShowProductModal(false);
+                              }}
+                            >
+                              <Plus size={14} />
+                              Добавить
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {Object.keys(filteredGroupedProducts).length === 0 && (
+                  <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+                    Товары не найдены
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

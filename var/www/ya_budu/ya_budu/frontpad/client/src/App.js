@@ -73,6 +73,7 @@ function AppContent() {
   const [showAlert, setShowAlert] = useState(null);
   const [newOrderAlert, setNewOrderAlert] = useState(null);
   const wsRef = useRef(null);
+  const currentPointIdRef = useRef(parseInt(localStorage.getItem('frontpad_point_id')) || 1);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   
   // Функция печати чека (глобальная)
@@ -180,6 +181,18 @@ function AppContent() {
     }
   }, []);
   
+  // Следим за сменой точки через localStorage
+  useEffect(() => {
+    const handleStorage = (e) => {
+      if (e.key === 'frontpad_point_id' && e.newValue) {
+        currentPointIdRef.current = parseInt(e.newValue);
+        console.log('[App.js] Точка изменена на:', currentPointIdRef.current);
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
+  
   // Загрузка критичных ингредиентов и непрочитанных сообщений при монтировании
   useEffect(() => {
     // WebSocket подключаем сразу (не зависит от авторизации)
@@ -203,24 +216,37 @@ function AppContent() {
           setShowAlert(data.ingredient);
           fetchCriticalIngredients();
         } else if (data.type === 'new_order') {
-          playNotificationSound('order');
+          // Фильтруем по точке — показываем уведомление только если заказ для текущей точки
+          const orderPointId = data.order?.point_id || 1;
+          const myPointId = currentPointIdRef.current || 1;
+          
+          // Показываем уведомление только если заказ для этой точки И статус "новый"
+          if (orderPointId === myPointId && data.order?.status === 'новый') {
+            playNotificationSound('order');
+            setNewOrderAlert(data.order);
+          }
+          
           fetchCriticalIngredients();
           fetchUnreadMessagesCount();
-          fetchPendingOrdersCount(); // Обновляем счётчик заказов
+          fetchPendingOrdersCount();
           
-          console.log('[App.js new_order] autoPrint:', data.autoPrint, 'order:', data.order?.id);
-          
-          // Показываем глобальное уведомление о новом заказе
-          setNewOrderAlert(data.order);
+          console.log('[App.js new_order] autoPrint:', data.autoPrint, 'order:', data.order?.id, 'point:', orderPointId, 'myPoint:', myPointId);
           
           // Автоматическая печать если это синхронизированный заказ с сайта (autoPrint: true)
-          // Для локальных заказов из Frontpad (autoPrint: undefined) - НЕ печатаем автоматически
-          if (data.autoPrint === true) {
+          if (data.autoPrint === true && orderPointId === myPointId) {
             console.log('[AUTO_PRINT] Запуск автоматической печати для синхронизированного заказа #' + data.order.id);
             setTimeout(() => {
               printReceipt(data.order, 'auto_print_sync');
             }, 2000);
           }
+        } else if (data.type === 'order_status_changed') {
+          // Если статус заказа изменился — убираем уведомление если это наш заказ
+          if (newOrderAlert && newOrderAlert.id === data.order?.id) {
+            if (data.order?.status !== 'новый') {
+              setNewOrderAlert(null);
+            }
+          }
+          fetchPendingOrdersCount();
         } else if (data.type === 'new_message') {
           fetchUnreadMessagesCount();
           playNotificationSound('message');

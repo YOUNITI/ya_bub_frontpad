@@ -8,21 +8,15 @@ const OrderStatusNotification = () => {
   const [loading, setLoading] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  const [showToast, setShowToast] = useState(false);
 
   // Проверка активного заказа при загрузке
   useEffect(() => {
-    // Только для авторизованных пользователей показываем уведомление о заказе
-    if (!user?.customer_id) {
-      // Если пользователь не авторизован - очищаем заказ и не показываем уведомление
-      setActiveOrder(null);
-      localStorage.removeItem('guestOrder');
-      return;
-    }
-    
     loadActiveOrder();
     connectWebSocket();
-    
-    // Проверяем localStorage для гостевых заказов - только если есть customer_id
+
+    // Всегда проверяем localStorage для сохраненных заказов (как гостей, так и авторизованных)
     const savedOrder = localStorage.getItem('guestOrder');
     if (savedOrder) {
       try {
@@ -38,41 +32,50 @@ const OrderStatusNotification = () => {
 
   // Загрузка активного заказа
   const loadActiveOrder = async () => {
-    if (!user?.customer_id) return;
-    
-    setLoading(true);
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/orders/my`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
+    // Для авторизованных пользователей - загружаем из API
+    if (user?.customer_id) {
+      setLoading(true);
+      try {
+        const token = localStorage.getItem('token');
+        const response = await fetch(`${API_BASE_URL}/api/orders/my`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (response.ok) {
+          const orders = await response.json();
+          // Ищем активный заказ
+          const active = orders.find(order => isActiveOrderStatus(order.status));
+          if (active) {
+            setActiveOrder(active);
+            // Сохраняем для гостевого режима
+            localStorage.setItem('guestOrder', JSON.stringify(active));
+          } else {
+            setActiveOrder(null);
+            localStorage.removeItem('guestOrder');
+          }
         }
-      });
-      
-      if (response.ok) {
-        const orders = await response.json();
-        // Ищем активный заказ
-        const active = orders.find(order => isActiveOrderStatus(order.status));
-        if (active) {
-          setActiveOrder(active);
-          // Сохраняем для гостевого режима
-          localStorage.setItem('guestOrder', JSON.stringify(active));
-        } else {
-          setActiveOrder(null);
-          localStorage.removeItem('guestOrder');
-        }
+      } catch (error) {
+        console.error('Error loading active order:', error);
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error('Error loading active order:', error);
-    } finally {
-      setLoading(false);
     }
+    // Для гостей заказы загружаются только из localStorage (уже сделано выше)
+  };
+
+  // Функция показа toast уведомления
+  const showToastNotification = (message) => {
+    setToastMessage(message);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 5000); // Скрываем через 5 секунд
   };
 
   // Подключение к WebSocket
   const connectWebSocket = () => {
-    // Не подключаемся если нет customer_id
-    if (!user?.customer_id) {
+    // Подключаемся всегда, даже для гостей (если есть активный заказ)
+    if (!activeOrder && !user?.customer_id) {
       return;
     }
     
@@ -102,24 +105,45 @@ const OrderStatusNotification = () => {
             // 1. По id или site_order_id заказа
             // 2. По customer_id (дополнительная проверка для безопасности)
             const isOurOrder = activeOrder && (
-              (data.order.id === activeOrder.id || 
+              (data.order.id === activeOrder.id ||
                data.order.site_order_id === activeOrder.id) &&
-              (!data.customer_id || data.customer_id === user.customer_id)
+              (!data.customer_id || data.customer_id === user?.customer_id)
             );
-            
+
             if (isOurOrder) {
-              const updatedOrder = { 
-                ...activeOrder, 
-                status: data.order.status,
+              const oldStatus = activeOrder.status;
+              const newStatus = data.order.status;
+
+              const updatedOrder = {
+                ...activeOrder,
+                status: newStatus,
                 ready_time: data.order.ready_time || activeOrder.ready_time
               };
               setActiveOrder(updatedOrder);
               localStorage.setItem('guestOrder', JSON.stringify(updatedOrder));
-              
+
+              // Показываем уведомление при изменении статуса
+              if (newStatus !== oldStatus) {
+                let statusMessage = '';
+                if (newStatus === 'processing' || newStatus === 'в производстве') {
+                  statusMessage = '🎉 Ваш заказ принят и начал готовиться!';
+                } else if (newStatus === 'ready' || newStatus === 'произведен') {
+                  statusMessage = '✅ Ваш заказ готов и ожидает выдачи!';
+                } else if (newStatus === 'delivering' || newStatus === 'в пути') {
+                  statusMessage = '🚚 Ваш заказ уже в пути!';
+                } else if (newStatus === 'completed' || newStatus === 'выполнен') {
+                  statusMessage = '🎊 Ваш заказ выполнен! Спасибо за заказ!';
+                }
+
+                if (statusMessage) {
+                  showToastNotification(statusMessage);
+                }
+              }
+
               // Если заказ завершён, отменён или удалён - скрываем уведомление
               // Проверяем оба языка статусов
-              if (data.order.status === 'completed' || data.order.status === 'cancelled' ||
-                  data.order.status === 'выполнен' || data.order.status === 'отменён') {
+              if (newStatus === 'completed' || newStatus === 'cancelled' ||
+                  newStatus === 'выполнен' || newStatus === 'отменён') {
                 // Сначала показываем финальный статус 3 секунды, затем скрываем
                 setTimeout(() => {
                   setActiveOrder(null);
@@ -150,7 +174,8 @@ const OrderStatusNotification = () => {
       };
     };
     
-    if (user?.customer_id) {
+    // Подключаемся если есть активный заказ (для гостей) или авторизованный пользователь
+    if (activeOrder || user?.customer_id) {
       connect();
     }
     
@@ -200,14 +225,27 @@ const OrderStatusNotification = () => {
     return new Intl.NumberFormat('ru-RU').format(price) + ' ₽';
   };
 
-  // Если нет активного заказа или пользователь не авторизован - не показываем компонент
-  if ((!activeOrder && !loading) || !user?.customer_id) {
+  // Если нет активного заказа - не показываем компонент
+  if (!activeOrder && !loading) {
     return null;
   }
 
   return (
-    <div className="fixed bottom-4 right-4 z-50">
-      {isMinimized ? (
+    <>
+      {/* Toast уведомление */}
+      {showToast && (
+        <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50">
+          <div className="bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg animate-pulse">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">✓</span>
+              <span>{toastMessage}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="fixed bottom-4 right-4 z-50">
+        {isMinimized ? (
         // Минимизированная версия
         <button
           onClick={() => setIsMinimized(false)}
@@ -314,7 +352,8 @@ const OrderStatusNotification = () => {
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 };
 

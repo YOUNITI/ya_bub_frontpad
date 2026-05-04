@@ -19,7 +19,7 @@
   "scripts": {
     "dev": "PORT=3006 react-scripts start",
     "start": "PORT=3006 react-scripts start",
-    "build": "NODE_OPTIONS=--openssl-legacy-provider react-scripts build",
+    "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL } from '../config';
-import ClientChat from './ClientChat';
 
 const Profile = () => {
   const { user, setUser } = useAuth();
@@ -577,7 +576,6 @@ const Profile = () => {
           )}
         </div>
       </div>
-      <ClientChat />
     </div>
   );
 };

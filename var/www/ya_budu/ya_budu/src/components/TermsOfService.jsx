@@ -119,7 +119,7 @@ const TermsOfService = () => {
             <ul className="list-disc list-inside text-gray-700 mb-4">
               <li>Телефон: 8 (938) 475-09-99</li>
               <li>Email: zakazyabudu@gmail.com</li>
-              <li>Адрес: Профессора Малигонова 35</li>
+              <li>Адреса: Профессора Малигонова 35, ул. Мурата Ахеджака 26</li>
             </ul>
           </div>
         </div>

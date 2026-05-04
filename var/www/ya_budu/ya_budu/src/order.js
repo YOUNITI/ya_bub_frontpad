@@ -132,7 +132,7 @@ async function submitOrder(orderData) {
             payment: orderData.payment,
             comment: orderData.comment,
             items: orderData.items,
-            location_id: orderData.pickup_location ? parseInt(orderData.pickup_location) : null
+            point_id: orderData.pickup_location ? parseInt(orderData.pickup_location) : 1
         };
 
         // Рассчитываем общую сумму

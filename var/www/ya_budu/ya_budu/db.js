@@ -251,7 +251,16 @@ async function createTables() {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
     `);
-    
+
+    // Миграция: добавить колонку location_id в таблицу orders
+    try {
+      await get("SELECT location_id FROM orders LIMIT 1");
+    } catch (err) {
+      console.log('[DB] Добавление колонки location_id в таблицу orders...');
+      await run('ALTER TABLE orders ADD COLUMN location_id INTEGER');
+      console.log('[DB] Колонка location_id добавлена в таблицу orders');
+    }
+
     console.log('[DB] Таблицы SQLite созданы');
 }
 
@@ -421,17 +430,16 @@ async function createMySQLTables() {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `;
-    
-    for (const statement of tables.split(';').filter(s => s.trim())) {
-        try {
-            await pool.query(statement);
-        } catch (err) {
-            if (!err.message.includes('already exists')) {
-                console.warn('[DB] Предупреждение:', err.message.substring(0, 80));
-            }
-        }
+
+    // Миграция: добавить колонку location_id в таблицу orders
+    try {
+      await pool.query("SELECT location_id FROM orders LIMIT 1");
+    } catch (err) {
+      console.log('[DB] Добавление колонки location_id в таблицу orders MySQL...');
+      await pool.query('ALTER TABLE orders ADD COLUMN location_id INT NULL');
+      console.log('[DB] Колонка location_id добавлена в таблицу orders MySQL');
     }
-    
+
     console.log('[DB] Таблицы MySQL созданы');
 }
 

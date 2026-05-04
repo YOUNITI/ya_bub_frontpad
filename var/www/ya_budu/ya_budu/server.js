@@ -881,25 +881,29 @@ app.get('/api/products/:productId/addons', async (req, res) => {
   }
 });
 
-app.post('/api/products/:productId/addons', authenticateToken, requireAdmin, async (req, res) => {
-  const { productId } = req.params;
-  const { name, price, sort_order } = req.body;
+app.put('/api/sizes/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { name, price_modifier, sort_order } = req.body;
   try {
-    const result = await run('INSERT INTO addons (product_id, name, price, sort_order) VALUES (?, ?, ?, ?)', [productId, name, price || 0, sort_order || 0]);
-    const addon = await get('SELECT * FROM addons WHERE id = ?', [result.lastID]);
-    res.json(addon);
+    await run('UPDATE sizes SET name = ?, price_modifier = ?, sort_order = ? WHERE id = ?', [name, price_modifier || 0, sort_order || 0, id]);
+    const size = await get('SELECT * FROM sizes WHERE id = ?', [id]);
+    res.json(size);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.put('/api/addons/:id', authenticateToken, requireAdmin, async (req, res) => {
+app.delete('/api/sizes/:id', authenticateToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const { name, price, sort_order } = req.body;
+  const { name, price, price_modifier, sort_order } = req.body;
+
+  // Используем price если передан, иначе price_modifier (для обратной совместимости)
+  const finalPriceModifier = price !== undefined ? price : (price_modifier || 0);
+
   try {
-    await run('UPDATE addons SET name = ?, price = ?, sort_order = ? WHERE id = ?', [name, price || 0, sort_order || 0, id]);
-    const addon = await get('SELECT * FROM addons WHERE id = ?', [id]);
-    res.json(addon);
+    await run('UPDATE sizes SET name = ?, price_modifier = ?, sort_order = ? WHERE id = ?', [name, finalPriceModifier, sort_order || 0, id]);
+    const size = await get('SELECT * FROM sizes WHERE id = ?', [id]);
+    res.json(size);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1000,8 +1004,10 @@ app.post('/api/messages', upload.single('image'), async (req, res) => {
   const content = req.body.content || null;
   const is_admin = req.body.is_admin === 'true' || req.body.is_admin === true || req.body.is_admin === 1;
   const image_url = req.file ? req.file.filename : null;
-  const cart_data = req.body.cart_data || null;
-  const cart_total = req.body.cart_total || 0;
+  
+  // Запрещаем отправку корзины из чата
+  const cart_data = null;
+  const cart_total = 0;
   
   console.log('[MESSAGE] Получено сообщение:', { sender_id, content, is_admin });
   
@@ -1205,7 +1211,7 @@ app.post('/api/guest-customers', async (req, res) => {
 
 // Создать заказ
 app.post('/api/orders', async (req, res) => {
-  const { customer_id, guest_name, guest_phone, guest_email, order_type, street, building, apartment, entrance, floor, intercom, is_asap, delivery_date, delivery_time, custom_time, payment, comment, items, total_amount, zone_id, delivery_price, zone_name } = req.body;
+  const { customer_id, guest_name, guest_phone, guest_email, order_type, street, building, apartment, entrance, floor, intercom, is_asap, delivery_date, delivery_time, custom_time, payment, comment, items, total_amount, zone_id, delivery_price, zone_name, location_id } = req.body;
   
   logToFile(`[ORDER_CREATE] Новый запрос на создание заказа от ${guest_name || 'гость'} (тел: ${guest_phone || 'не указан'})`);
   
@@ -1258,6 +1264,7 @@ app.post('/api/orders', async (req, res) => {
       zone_id: zone_id || null,
       delivery_price: delivery_price || 0,
       zone_name: zone_name || null,
+      location_id: location_id || null,
       status: 'pending',
       created_at: getMoscowTime()
     });
@@ -1301,22 +1308,27 @@ app.post('/api/orders', async (req, res) => {
       console.log(`[SYNC] Начинаем синхронизацию заказа ${orderNumber} с Frontpad: ${FRONTPAD_URL}`);
       console.log(`[SYNC] Используем токен: ${String(syncToken).substring(0, 5)}...`);
       
-      // ✅ Получаем point_id для выбранного района
+      // ✅ Получаем point_id для выбранного района или точки самовывоза
       let orderPointId = 1; // по умолчанию точка 1
-      if (zone_id) {
+
+      if (order_type === 'pickup') {
+        // Для самовывоза используем location_id из формы
+        orderPointId = location_id || 1;
+        console.log(`[SYNC] Самовывоз: используем точку ${orderPointId} из location_id`);
+      } else if (zone_id) {
         try {
-          // Запрашиваем у Frontpad информацию о районе чтобы получить его point_id
+          // Для доставки запрашиваем у Frontpad информацию о районе чтобы получить его point_id
           const zoneResponse = await fetch(`${FRONTPAD_URL}/api/delivery-zones/${zone_id}`, {
             headers: {
               'X-Sync-Token': syncToken
             }
           });
-          
+
           if (zoneResponse.ok) {
             const zoneData = await zoneResponse.json();
             if (zoneData && zoneData.point_id) {
               orderPointId = zoneData.point_id;
-              console.log(`[SYNC] Район ${zone_id} относится к точке ${orderPointId}`);
+              console.log(`[SYNC] Доставка: район ${zone_id} относится к точке ${orderPointId}`);
             }
           }
         } catch (zoneErr) {
@@ -1350,6 +1362,7 @@ app.post('/api/orders', async (req, res) => {
         zone_id: zone_id || null,
         delivery_price: delivery_price || 0,
         zone_name: zone_name || null,
+        location_id: location_id || null,
         status: 'pending',
         created_at: getMoscowTime(),
         point_id: orderPointId // ✅ Распределение заказа по точкам
@@ -1955,6 +1968,117 @@ async function syncCategoryToFrontpad(category) {
     console.error('Ошибка синхронизации категории с Frontpad:', err.message);
   }
 }
+
+// Синхронизация категории из Frontpad
+app.post('/api/site/categories/sync-from-frontpad', async (req, res) => {
+  const { id, name, slug, sort_order, action } = req.body;
+  console.log('[SYNC] Получена синхронизация категории:', { id, name, action });
+
+  try {
+    if (action === 'delete') {
+      // Удаляем категорию
+      await run('DELETE FROM categories WHERE id = ?', [id]);
+      console.log(`Категория ${id} удалена из синхронизации с Frontpad`);
+    } else {
+      // Проверяем существует ли категория
+      const existing = await get('SELECT * FROM categories WHERE id = ?', [id]);
+
+      if (existing) {
+        // Обновляем
+        await run('UPDATE categories SET name = ?, slug = ?, sort_order = ? WHERE id = ?',
+          [name, slug, sort_order || 0, id]);
+        console.log(`Категория ${name} обновлена из Frontpad`);
+      } else {
+        // Создаем
+        await run('INSERT INTO categories (id, name, slug, sort_order) VALUES (?, ?, ?, ?)',
+          [id, name, slug, sort_order || 0]);
+        console.log(`Категория ${name} создана из Frontpad`);
+      }
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Ошибка синхронизации категории из Frontpad:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Синхронизация порядка категорий из Frontpad
+app.post('/api/site/categories/reorder', async (req, res) => {
+  const { categories } = req.body;
+
+  try {
+    if (!categories || !Array.isArray(categories)) {
+      return res.status(400).json({ error: 'categories is required and must be an array' });
+    }
+
+    for (const cat of categories) {
+      await run('UPDATE categories SET sort_order = ? WHERE id = ?', [cat.sort_order, cat.id]);
+    }
+
+    console.log(`Порядок категорий обновлен из Frontpad (${categories.length} категорий)`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Ошибка синхронизации порядка категорий из Frontpad:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Ручная синхронизация всех категорий из Frontpad
+app.post('/api/site/categories/sync-all-from-frontpad', async (req, res) => {
+  try {
+    console.log('[SYNC] Запрос синхронизации всех категорий из Frontpad');
+
+    const response = await fetch(`${FRONTPAD_URL}/api/categories`, {
+      headers: {
+        'X-Sync-Token': SITE_SYNC_TOKEN
+      }
+    });
+
+    if (!response.ok) {
+      return res.status(500).json({ error: 'Не удалось получить категории из Frontpad' });
+    }
+
+    const categories = await response.json();
+    console.log(`[SYNC] Получено ${categories.length} категорий из Frontpad`);
+
+    let synced = 0;
+    let errors = 0;
+
+    for (const category of categories) {
+      try {
+        // Проверяем существует ли категория
+        const existing = await get('SELECT * FROM categories WHERE id = ?', [category.id]);
+
+        if (existing) {
+          // Обновляем
+          await run('UPDATE categories SET name = ?, slug = ?, sort_order = ? WHERE id = ?',
+            [category.name, category.slug, category.sort_order || 0, category.id]);
+          console.log(`Категория ${category.name} обновлена`);
+        } else {
+          // Создаем
+          await run('INSERT INTO categories (id, name, slug, sort_order) VALUES (?, ?, ?, ?)',
+            [category.id, category.name, category.slug, category.sort_order || 0]);
+          console.log(`Категория ${category.name} создана`);
+        }
+        synced++;
+      } catch (err) {
+        console.error(`Ошибка синхронизации категории ${category.name}:`, err.message);
+        errors++;
+      }
+    }
+
+    res.json({
+      message: `Синхронизировано ${synced} категорий, ошибок: ${errors}`,
+      total: categories.length,
+      synced,
+      errors
+    });
+  } catch (err) {
+    console.error('Ошибка массовой синхронизации категорий:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ============ API РАЙОНОВ ДОСТАВКИ (получаем из Frontpad) ============
 

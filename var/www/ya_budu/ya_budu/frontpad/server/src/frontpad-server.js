@@ -13,6 +13,7 @@ import { writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import serveStatic from 'serve-static';
 import fetch from 'node-fetch';
+import jwt from 'jsonwebtoken';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,6 +22,8 @@ const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
 const PORT = process.env.FRONTPAD_PORT || 3005;
+
+const JWT_SECRET = process.env.JWT_SECRET || 'your-jwt-secret-key-change-in-production';
 
 // ✅ 🔥 ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ: ЭНДПОИНТЫ ПЕРЕД ВСЕМИ МИДЛВАРАМИ!
 app.post('/api/products/:productId/sizes/:sizeId/addons', async (req, res) => {
@@ -244,6 +247,24 @@ const initializeDb = async () => {
     );
   `);
   console.log('Таблицы settings, chats, chat_messages готовы');
+  
+  // Миграция: добавляем колонку price в sizes если её нет
+  try {
+    const sizesCols = await db.all("PRAGMA table_info(sizes)");
+    const hasPrice = sizesCols.some(c => c.name === 'price');
+    const hasPriceModifier = sizesCols.some(c => c.name === 'price_modifier');
+    if (!hasPrice && hasPriceModifier) {
+      await db.exec('ALTER TABLE sizes ADD COLUMN price REAL DEFAULT 0');
+      // Копируем данные из price_modifier в price
+      await db.exec('UPDATE sizes SET price = price_modifier WHERE price = 0 OR price IS NULL');
+      console.log('Миграция: добавлена колонка price в sizes, данные скопированы из price_modifier');
+    } else if (!hasPrice && !hasPriceModifier) {
+      await db.exec('ALTER TABLE sizes ADD COLUMN price REAL DEFAULT 0');
+      console.log('Миграция: добавлена колонка price в sizes');
+    }
+  } catch (e) {
+    console.error('Ошибка миграции sizes:', e.message);
+  }
 };
 
 initializeDb();
@@ -499,11 +520,17 @@ app.delete('/api/products/:id', async (req, res) => {
 
 // Заказы
 app.get('/api/orders', async (req, res) => {
-  const { status, point_id } = req.query;
+  const { status, point_id, date } = req.query;
   try {
     let query = 'SELECT * FROM orders';
     const params = [];
     const conditions = [];
+    
+    // Фильтр по дате
+    if (date && date !== 'all') {
+      conditions.push('DATE(created_at) = ?');
+      params.push(date);
+    }
     
     if (status && status !== 'all') {
       conditions.push('status = ?');
@@ -624,10 +651,9 @@ app.put('/api/orders/:id', async (req, res) => {
     guest_name, guest_phone, guest_email, 
     order_type, payment, comment, items, total_amount, status,
     address, street, building, apartment, entrance, floor, intercom,
-    is_asap, delivery_date, delivery_time, custom_time
+    is_asap, delivery_date, delivery_time, custom_time, point_id
   } = req.body;
   try {
-    // Формируем полный адрес
     const fullAddress = address || 
       (street ? street + (building ? ', д.' + building : '') + (apartment ? ', кв.' + apartment : '') : '');
     
@@ -636,7 +662,7 @@ app.put('/api/orders/:id', async (req, res) => {
         guest_name = ?, guest_phone = ?, guest_email = ?, 
         order_type = ?, payment = ?, comment = ?, items = ?, total_amount = ?, status = ?,
         address = ?, street = ?, building = ?, apartment = ?, entrance = ?, floor = ?, intercom = ?,
-        is_asap = ?, delivery_date = ?, delivery_time = ?, custom_time = ?
+        is_asap = ?, delivery_date = ?, delivery_time = ?, custom_time = ?, point_id = ?
        WHERE id = ?`,
       [
         guest_name, guest_phone, guest_email || null,
@@ -646,6 +672,7 @@ app.put('/api/orders/:id', async (req, res) => {
         entrance || null, floor || null, intercom || null,
         is_asap !== undefined ? (is_asap ? 1 : 0) : 1,
         delivery_date || null, delivery_time || null, custom_time || null,
+        point_id !== undefined ? point_id : 1,
         id
       ]
     );
@@ -1170,16 +1197,40 @@ app.get('/api/preorder-dates', async (req, res) => {
 
 app.get('/api/preorders/:date', async (req, res) => {
   try {
-    const orders = await db.all(
-      `SELECT * FROM orders WHERE delivery_date = ? AND delivery_date > date('now') 
-       AND status NOT IN ('delivered', 'cancelled') ORDER BY created_at DESC`,
-      [req.params.date]
-    );
+    let pointId = req.query.point_id ? parseInt(req.query.point_id) : null;
+    
+    const authHeader = req.headers.authorization;
+    if ((!pointId || pointId === 0) && authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.substring(7);
+        const decoded = jwt.verify(token, JWT_SECRET);
+        pointId = decoded.point_id;
+      } catch (e) {
+      }
+    }
+
+    let query = `SELECT * FROM orders WHERE delivery_date = ? AND delivery_date > date('now')
+       AND status NOT IN ('delivered', 'cancelled')`;
+    const params = [req.params.date];
+
+    if (pointId && pointId !== 0) {
+      query += ' AND point_id = ?';
+      params.push(pointId);
+    }
+
+    query += ' ORDER BY created_at DESC';
+
+    console.log(`[/api/preorders/${req.params.date}] Query:`, query, 'Params:', params);
+
+    const orders = await db.all(query, params);
     orders.forEach(order => {
       try { order.items = JSON.parse(order.items); } catch (e) { order.items = []; }
     });
+
+    console.log(`[/api/preorders/${req.params.date}] Found ${orders.length} preorders`);
     res.json(orders);
   } catch (err) {
+    console.error('[/api/preorders] Error:', err.message);
     res.json([]);
   }
 });

@@ -311,7 +311,7 @@ const Products = () => {
                     const response = await axios.post(`/api/products/${productId}/sizes`, {
                         name: size.name,
                         size_value: size.name,
-                        price_modifier: size.price
+                        price: parseFloat(size.price) || 0
                     });
                     newSizesLocal[i] = {
                         ...size,

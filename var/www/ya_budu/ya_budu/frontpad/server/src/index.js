@@ -117,6 +117,19 @@ const initializeDb = async () => {
       } catch (e) {
         console.log('Миграция couriers не требуется (SQLite):', e.message);
       }
+
+      // Миграция: добавить point_id в таблицу users для SQLite
+      try {
+        const usersTableInfo = await all("PRAGMA table_info(users)");
+        const hasPointId = usersTableInfo.find(col => col.name === 'point_id');
+
+        if (!hasPointId) {
+          await run('ALTER TABLE users ADD COLUMN point_id INTEGER DEFAULT 1');
+          console.log('Колонка point_id добавлена в таблицу users (SQLite)');
+        }
+      } catch (e) {
+        console.log('Миграция point_id для users не требуется (SQLite):', e.message);
+      }
     } else if (dbType === 'mysql') {
       // Для MySQL используем информационную схему
       try {
@@ -276,6 +289,16 @@ const initializeDb = async () => {
           console.log('Колонка point_id добавлена в таблицу users (MySQL)');
         } catch (err) {}
       }
+
+      // Миграция: добавить point_id в таблицу settings
+      try {
+        await get("SELECT point_id FROM settings LIMIT 1");
+      } catch (e) {
+        try {
+          await run('ALTER TABLE settings ADD COLUMN point_id INT DEFAULT 0');
+          console.log('Колонка point_id добавлена в таблицу settings (MySQL)');
+        } catch (err) {}
+      }
       
       // Миграция: создать таблицу points
       try {
@@ -321,6 +344,32 @@ const initializeDb = async () => {
           console.log('Колонка point_id добавлена в таблицу delivery_zones (MySQL)');
         } catch (err) {}
       }
+
+      // Миграция: добавить point_id в таблицу delivery_zones для SQLite
+      try {
+        const deliveryZonesTableInfo = await all("PRAGMA table_info(delivery_zones)");
+        const hasPointId = deliveryZonesTableInfo.find(col => col.name === 'point_id');
+
+        if (!hasPointId) {
+          await run('ALTER TABLE delivery_zones ADD COLUMN point_id INTEGER DEFAULT 1');
+          console.log('Колонка point_id добавлена в таблицу delivery_zones (SQLite)');
+        }
+      } catch (e) {
+        console.log('Миграция point_id для delivery_zones не требуется (SQLite):', e.message);
+      }
+
+      // Миграция: добавить point_id в таблицу settings для SQLite
+      try {
+        const settingsTableInfo = await all("PRAGMA table_info(settings)");
+        const hasPointId = settingsTableInfo.find(col => col.name === 'point_id');
+
+        if (!hasPointId) {
+          await run('ALTER TABLE settings ADD COLUMN point_id INTEGER DEFAULT 0');
+          console.log('Колонка point_id добавлена в таблицу settings (SQLite)');
+        }
+      } catch (e) {
+        console.log('Миграция point_id для settings не требуется (SQLite):', e.message);
+      }
       
       // Миграция: добавить point_id в таблицу couriers
       try {
@@ -351,8 +400,10 @@ const initializeDb = async () => {
   if (dbType === 'sqlite') {
     await exec(`
       CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY,
-        value TEXT DEFAULT ''
+        key TEXT NOT NULL,
+        value TEXT DEFAULT '',
+        point_id INTEGER DEFAULT 0,
+        PRIMARY KEY (key, point_id)
       );
       
       CREATE TABLE IF NOT EXISTS chats (
@@ -559,24 +610,24 @@ const initializeDb = async () => {
       const existingUser = await get('SELECT * FROM users WHERE username = ?', ['admin']);
       if (!existingUser) {
         const hashedPassword = await bcrypt.hash('admin', 10);
-        await run('INSERT INTO users (username, password, role, email) VALUES (?, ?, ?, ?)', 
-          ['admin', hashedPassword, 'admin', 'admin@yabudu.local']);
+        await run('INSERT INTO users (username, password, role, email, point_id) VALUES (?, ?, ?, ?, ?)',
+          ['admin', hashedPassword, 'admin', 'admin@yabudu.local', 1]);
         console.log('Создан пользователь admin/admin');
       }
     } catch (e) {
       console.log('Пользователь уже существует или ошибка:', e.message);
     }
-    
+
     // Создаем тестовые районы доставки если таблица пуста
     try {
       const zonesCount = await get('SELECT COUNT(*) as count FROM delivery_zones');
       if (!zonesCount || zonesCount.count === 0) {
-        await run(`INSERT INTO delivery_zones (name, min_order_amount, delivery_price, is_active, sort_order) VALUES 
-          ('Центральный район', 1000, 150, 1, 1),
-          ('Северный район', 1200, 200, 1, 2),
-          ('Южный район', 1000, 150, 1, 3),
-          ('Восточный район', 1500, 250, 1, 4),
-          ('Западный район', 1000, 150, 1, 5)`);
+        await run(`INSERT INTO delivery_zones (name, min_order_amount, delivery_price, is_active, sort_order, point_id) VALUES
+          ('Центральный район', 1000, 150, 1, 1, 1),
+          ('Северный район', 1200, 200, 1, 2, 1),
+          ('Южный район', 1000, 150, 1, 3, 2),
+          ('Восточный район', 1500, 250, 1, 4, 2),
+          ('Западный район', 1000, 150, 1, 5, 1)`);
         console.log('Созданы тестовые районы доставки');
       }
     } catch (e) {
@@ -584,13 +635,33 @@ const initializeDb = async () => {
     }
     
     console.log('Все таблицы готовы (SQLite)');
+    
+    // Миграция: добавляем колонку price в sizes если её нет
+    try {
+      const sizesCols = await all("PRAGMA table_info(sizes)");
+      const hasPrice = sizesCols.some(c => c.name === 'price');
+      const hasPriceModifier = sizesCols.some(c => c.name === 'price_modifier');
+      if (!hasPrice && hasPriceModifier) {
+        await run('ALTER TABLE sizes ADD COLUMN price REAL DEFAULT 0');
+        await run('UPDATE sizes SET price = price_modifier WHERE price = 0 OR price IS NULL');
+        console.log('Миграция: добавлена колонка price в sizes');
+      } else if (!hasPrice && !hasPriceModifier) {
+        await run('ALTER TABLE sizes ADD COLUMN price REAL DEFAULT 0');
+        console.log('Миграция: добавлена колонка price в sizes');
+      }
+    } catch (e) {
+      console.error('Ошибка миграции sizes:', e.message);
+    }
   } else if (dbType === 'mysql') {
     // Для MySQL создаем таблицы отдельно
     await exec(`
-      CREATE TABLE IF NOT EXISTS settings (
-        \`key\` VARCHAR(255) PRIMARY KEY,
-        value TEXT
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        CREATE TABLE IF NOT EXISTS settings (
+            key VARCHAR(255) NOT NULL,
+            value TEXT,
+            point_id INT DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (key, point_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       
       CREATE TABLE IF NOT EXISTS chats (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -796,14 +867,14 @@ const initializeDb = async () => {
       const existingUser = await get('SELECT * FROM users WHERE username = ?', ['admin']);
       if (!existingUser) {
         const hashedPassword = await bcrypt.hash('admin', 10);
-        await run('INSERT INTO users (username, password, role, email) VALUES (?, ?, ?, ?)', 
-          ['admin', hashedPassword, 'admin', 'admin@yabudu.local']);
+        await run('INSERT INTO users (username, password, role, email, point_id) VALUES (?, ?, ?, ?, ?)',
+          ['admin', hashedPassword, 'admin', 'admin@yabudu.local', 1]);
         console.log('Создан пользователь admin/admin');
       }
     } catch (e) {
       console.log('Пользователь уже существует или ошибка:', e.message);
     }
-    
+
     console.log('Все таблицы готовы (MySQL)');
   }
 };
@@ -845,23 +916,29 @@ const broadcast = (data) => {
     clients.forEach(client => {
       try {
         if (client.readyState !== 1) return;
-        
+
         // Для новых заказов - фильтруем по точке
         if (data.type === 'new_order' && data.order) {
-          // Администратор получает все
-          if (client.role === 'admin' || client.pointId === 0 || client.pointId === null) {
+          // Главный администратор (point_id = 0) получает ВСЕ заказы
+          if (client.pointId === 0) {
             client.send(message);
             return;
           }
-          
-          // Если заказ привязан к точке - отправляем только этой точке
-          if (data.order.point_id && client.pointId === data.order.point_id) {
+
+          // Администратор точки получает ТОЛЬКО заказы своей точки
+          if (client.role === 'admin' && client.pointId && data.order.point_id === client.pointId) {
             client.send(message);
             return;
           }
-          
-          // Если заказ не привязан ни к какой точке - отправляем всем
-          if (!data.order.point_id) {
+
+          // Курьер получает ТОЛЬКО заказы своей точки
+          if (client.role === 'courier' && client.pointId && data.order.point_id === client.pointId) {
+            client.send(message);
+            return;
+          }
+
+          // Если заказ не привязан ни к какой точке - отправляем администраторам всех точек
+          if (!data.order.point_id && client.role === 'admin') {
             client.send(message);
             return;
           }
@@ -1415,6 +1492,21 @@ app.post('/api/categories', async (req, res) => {
     const result = await run('INSERT INTO categories (name, slug) VALUES (?, ?)', [name, slug]);
     const category = await get('SELECT * FROM categories WHERE id = ?', [result.lastID]);
     broadcast({ type: 'category_created', category });
+
+    // Синхронизируем с основным сайтом
+    try {
+      const SITE_URL = process.env.SITE_URL || 'http://localhost:3001';
+      console.log(`[SYNC] Синхронизация категории ${name} с ${SITE_URL}/api/site/categories/sync-from-frontpad`);
+      await fetch(`${SITE_URL}/api/site/categories/sync-from-frontpad`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(category)
+      });
+      console.log(`Категория ${name} синхронизирована с основным сайтом`);
+    } catch (syncErr) {
+      console.error('Ошибка синхронизации категории с основным сайтом:', syncErr.message);
+    }
+
     res.json(category);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1459,6 +1551,20 @@ app.put('/api/categories/:id', async (req, res) => {
     await run('UPDATE categories SET name = ?, slug = ? WHERE id = ?', [name, slug, id]);
     const category = await get('SELECT * FROM categories WHERE id = ?', [id]);
     broadcast({ type: 'category_updated', category });
+
+    // Синхронизируем с основным сайтом
+    try {
+      const SITE_URL = process.env.SITE_URL || 'http://localhost:3001';
+      await fetch(`${SITE_URL}/api/site/categories/sync-from-frontpad`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(category)
+      });
+      console.log(`Категория ${name} обновлена и синхронизирована с основным сайтом`);
+    } catch (syncErr) {
+      console.error('Ошибка синхронизации категории с основным сайтом:', syncErr.message);
+    }
+
     res.json(category);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1470,7 +1576,58 @@ app.delete('/api/categories/:id', async (req, res) => {
   try {
     await run('DELETE FROM categories WHERE id = ?', [id]);
     broadcast({ type: 'category_deleted', id });
+
+    // Синхронизируем удаление с основным сайтом
+    try {
+      const SITE_URL = process.env.SITE_URL || 'http://localhost:3001';
+      console.log(`[SYNC] Синхронизация удаления категории ${id} с ${SITE_URL}/api/site/categories/sync-from-frontpad`);
+      await fetch(`${SITE_URL}/api/site/categories/sync-from-frontpad`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, action: 'delete' })
+      });
+      console.log(`Удаление категории ${id} синхронизировано с основным сайтом`);
+    } catch (syncErr) {
+      console.error('Ошибка синхронизации удаления категории с основным сайтом:', syncErr.message);
+    }
+
     res.json({ message: 'Категория удалена' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Ручная синхронизация всех категорий с основным сайтом
+app.post('/api/categories/sync-all-to-site', async (req, res) => {
+  try {
+    const categories = await all('SELECT * FROM categories ORDER BY sort_order ASC, name ASC');
+    console.log(`[SYNC] Синхронизация ${categories.length} категорий с основным сайтом`);
+
+    const SITE_URL = process.env.SITE_URL || 'http://localhost:3001';
+    let synced = 0;
+    let errors = 0;
+
+    for (const category of categories) {
+      try {
+        console.log(`[SYNC] Синхронизация категории ${category.name} (${category.id})`);
+        await fetch(`${SITE_URL}/api/site/categories/sync-from-frontpad`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(category)
+        });
+        synced++;
+      } catch (err) {
+        console.error(`Ошибка синхронизации категории ${category.name}:`, err.message);
+        errors++;
+      }
+    }
+
+    res.json({
+      message: `Синхронизировано ${synced} категорий, ошибок: ${errors}`,
+      total: categories.length,
+      synced,
+      errors
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2004,26 +2161,29 @@ app.put('/api/orders/:id/status', async (req, res) => {
     }
     
     await run('UPDATE orders SET status = ? WHERE id = ?', [status, id]);
-    order.items = parseOrderItems(order.items);
-    
-    console.log(`[STATUS_CHANGE] Статус заказа #${id} (site_order_id: ${order.site_order_id}) изменён на "${status}"`);
-    
+
+    // Получаем обновленный заказ из базы данных
+    const updatedOrder = await get('SELECT * FROM orders WHERE id = ?', [id]);
+    updatedOrder.items = parseOrderItems(updatedOrder.items);
+
+    console.log(`[STATUS_CHANGE] Статус заказа #${id} (site_order_id: ${updatedOrder.site_order_id}) изменён на "${status}"`);
+
     // Синхронизируем статус с основным сайтом
     // ВАЖНО: используем site_order_id если есть, иначе id
-    const orderIdForSync = order.site_order_id || id;
+    const orderIdForSync = updatedOrder.site_order_id || id;
     syncOrderToSite('/api/site/orders/status-sync', {
       order_id: orderIdForSync,
       status: status,
-      customer_id: order.customer_id
+      customer_id: updatedOrder.customer_id
     });
-    
+
     // Автоматическая печать при изменении статуса
     if (status === 'в производстве' || status === 'произведен') {
       console.log(`[AUTO_PRINT] Автоматическая печать чека при смене статуса на "${status}" для заказа #${id}`);
-      broadcast({ type: 'print_receipt', receipt: { orderId: order.id, autoPrint: true, reason: `status_change_${status}` } });
+      broadcast({ type: 'print_receipt', receipt: { orderId: updatedOrder.id, autoPrint: true, reason: `status_change_${status}` } });
     }
-    
-    broadcast({ type: 'order_status_changed', order });
+
+    broadcast({ type: 'order_status_changed', order: updatedOrder });
     
     res.json(order);
   } catch (err) {
@@ -2749,10 +2909,23 @@ app.delete('/api/recipes/:id', async (req, res) => {
 // Endpoint для получения списка дат с предзаказами
 app.get('/api/preorder-dates', async (req, res) => {
   try {
+    // Получаем point_id из токена авторизации
+    const authHeader = req.headers.authorization;
+    let userPointId = null;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.substring(7);
+        const decoded = jwt.verify(token, JWT_SECRET);
+        userPointId = decoded.point_id;
+      } catch (e) {
+        // Токен невалиден
+      }
+    }
+
     // Используем MySQL совместимую дату
     const dbType = getDbType();
     let today;
-    
+
     if (dbType === 'mysql') {
       // Для MySQL используем CURDATE()
       const result = await get('SELECT CURDATE() as today');
@@ -2761,43 +2934,57 @@ app.get('/api/preorder-dates', async (req, res) => {
       // Для SQLite используем moment
       today = moment().format('YYYY-MM-DD');
     }
-    
-    console.log('[/api/preorder-dates] Today:', today);
+
+    console.log('[/api/preorder-dates] Today:', today, 'point_id:', userPointId);
     
     // Получаем даты предзаказов (is_asap = 0) с будущей датой доставки
     // ВАЖНО: используем подзапрос для фильтрации ДО агрегации, чтобы избежать ошибки MySQL
     let dates;
+    let params = [today];
+
     if (dbType === 'mysql') {
       // Используем подзапрос - сначала фильтруем записи, потом группируем
       // CAST(order_count AS UNSIGNED) для возврата числа вместо строки
-      dates = await all(
-        `SELECT delivery_date, CAST(SUM(order_count) AS UNSIGNED) as order_count FROM (
-          SELECT 
+      let query = `SELECT delivery_date, CAST(SUM(order_count) AS UNSIGNED) as order_count FROM (
+          SELECT
             TRIM(delivery_date) as delivery_date,
             COUNT(*) as order_count
           FROM orders
-          WHERE is_asap = 0 
-            AND delivery_date IS NOT NULL 
+          WHERE is_asap = 0
+            AND delivery_date IS NOT NULL
             AND TRIM(delivery_date) != ''
             AND TRIM(delivery_date) != 'NULL'
             AND LENGTH(TRIM(delivery_date)) > 0
-            AND status NOT IN ('delivered', 'cancelled')
-          GROUP BY TRIM(delivery_date)
-        ) AS filtered 
-        WHERE delivery_date >= ? 
+            AND status NOT IN ('delivered', 'cancelled')`;
+
+      // Фильтр по точке если пользователь авторизован
+      if (userPointId && userPointId !== 0) {
+        query += ' AND point_id = ?';
+        params.unshift(userPointId); // Добавляем в начало массива параметров
+      }
+
+      query += ` GROUP BY TRIM(delivery_date)
+        ) AS filtered
+        WHERE delivery_date >= ?
         GROUP BY delivery_date
-        ORDER BY delivery_date ASC`,
-        [today]
-      );
+        ORDER BY delivery_date ASC`;
+
+      dates = await all(query, params);
     } else {
       // SQLite - добавляем проверку delivery_date != '' и TRIM()
-      dates = await all(
-        `SELECT MIN(delivery_date) as delivery_date, COUNT(*) as order_count FROM orders 
-         WHERE is_asap = 0 AND delivery_date IS NOT NULL AND delivery_date != '' AND delivery_date != 'NULL' AND TRIM(delivery_date) != '' AND LENGTH(TRIM(delivery_date)) > 0 AND substr(TRIM(delivery_date), 1, 10) >= ? 
-         AND status NOT IN ('delivered', 'cancelled') 
-         GROUP BY substr(TRIM(delivery_date), 1, 10) ORDER BY delivery_date ASC`,
-        [today]
-      );
+      let query = `SELECT MIN(delivery_date) as delivery_date, COUNT(*) as order_count FROM orders
+         WHERE is_asap = 0 AND delivery_date IS NOT NULL AND delivery_date != '' AND delivery_date != 'NULL' AND TRIM(delivery_date) != '' AND LENGTH(TRIM(delivery_date)) > 0 AND substr(TRIM(delivery_date), 1, 10) >= ?`;
+
+      // Фильтр по точке если пользователь авторизован
+      if (userPointId && userPointId !== 0) {
+        query += ' AND point_id = ?';
+        params.unshift(userPointId); // Добавляем в начало массива параметров
+      }
+
+      query += ` AND status NOT IN ('delivered', 'cancelled')
+         GROUP BY substr(TRIM(delivery_date), 1, 10) ORDER BY delivery_date ASC`;
+
+      dates = await all(query, params);
     }
     
     console.log('[/api/preorder-dates] Found dates:', dates);
@@ -2812,20 +2999,40 @@ app.get('/api/preorders/:date', async (req, res) => {
   try {
     const dbType = getDbType();
     let today;
-    
+
     if (dbType === 'mysql') {
       const result = await get('SELECT CURDATE() as today');
       today = result?.today || new Date().toISOString().slice(0, 10);
     } else {
       today = moment().format('YYYY-MM-DD');
     }
-    
+
+    // Фильтр по точке из токена
+    let filterPointId = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.substring(7);
+        const decoded = jwt.verify(token, JWT_SECRET);
+        filterPointId = decoded.point_id;
+      } catch (e) {
+        // Токен невалиден
+      }
+    }
+
     // Получаем предзаказы (is_asap = 0) на конкретную дату
-    const orders = await all(
-      `SELECT * FROM orders WHERE is_asap = 0 AND delivery_date = ? 
-       AND status NOT IN ('delivered', 'cancelled') ORDER BY created_at DESC`,
-      [req.params.date]
-    );
+    let query = `SELECT * FROM orders WHERE is_asap = 0 AND delivery_date = ?
+                  AND status NOT IN ('delivered', 'cancelled')`;
+    const params = [req.params.date];
+
+    if (filterPointId && filterPointId !== 0 && filterPointId !== '0') {
+      query += ' AND point_id = ?';
+      params.push(parseInt(filterPointId));
+    }
+
+    query += ' ORDER BY created_at DESC';
+
+    const orders = await all(query, params);
     orders.forEach(order => {
       order.items = parseOrderItems(order.items);
     });
@@ -3318,11 +3525,33 @@ app.delete('/api/products/:productId/addons', async (req, res) => {
 
 app.get('/api/settings', async (req, res) => {
   try {
-    const settings = await all('SELECT * FROM settings');
+    // Получаем point_id из токена пользователя
+    const authHeader = req.headers.authorization;
+    let userPointId = 0; // 0 = общие настройки
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.substring(7);
+        const decoded = jwt.verify(token, JWT_SECRET);
+        userPointId = decoded.point_id || 0;
+      } catch (e) {
+        // Токен невалиден, используем общие настройки
+      }
+    }
+
+    // Получаем настройки для точки пользователя, дополняя общими настройками
+    const allSettings = await all('SELECT * FROM settings ORDER BY point_id DESC');
     const settingsObj = {};
-    settings.forEach(s => {
+
+    // Сначала загружаем общие настройки (point_id = 0)
+    allSettings.filter(s => s.point_id === 0).forEach(s => {
       settingsObj[s.key] = s.value;
     });
+
+    // Затем перезаписываем настройками для конкретной точки
+    allSettings.filter(s => s.point_id === userPointId).forEach(s => {
+      settingsObj[s.key] = s.value;
+    });
+
     res.json(settingsObj);
   } catch (err) {
     console.error('Error fetching settings:', err.message);
@@ -3342,12 +3571,29 @@ app.get('/api/settings', async (req, res) => {
 app.put('/api/settings/:key', async (req, res) => {
   const { key } = req.params;
   const { value } = req.body;
+
   try {
+    // Получаем point_id из токена пользователя
+    const authHeader = req.headers.authorization;
+    let userPointId = 0; // 0 = общие настройки
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.substring(7);
+        const decoded = jwt.verify(token, JWT_SECRET);
+        userPointId = decoded.point_id || 0;
+      } catch (e) {
+        // Токен невалиден, используем общие настройки
+      }
+    }
+
+    // Сохраняем настройку для точки пользователя
     await run(
-      `INSERT INTO settings (\`key\`, value) VALUES (?, ?)\n       ON DUPLICATE KEY UPDATE value = ?`,
-      [key, value, value]
+      `INSERT INTO settings (key, value, point_id) VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE value = ?`,
+      [key, value, userPointId, value]
     );
-    res.json({ key, value });
+
+    res.json({ key, value, point_id: userPointId });
   } catch (err) {
     console.error('Error updating setting:', err.message);
     res.status(500).json({ error: err.message });
@@ -3356,10 +3602,55 @@ app.put('/api/settings/:key', async (req, res) => {
 
 // ============ CHATS ============
 
+app.post('/api/chats', async (req, res) => {
+  const { customer_id, customer_name, customer_phone } = req.body;
+  console.log('API: Создание чата для клиента:', {
+    customer_id: customer_id,
+    customer_name: customer_name,
+    customer_phone: customer_phone,
+    type: typeof customer_id
+  });
+
+  if (!customer_id) {
+    return res.status(400).json({ error: 'customer_id is required' });
+  }
+
+  try {
+    // Проверяем, существует ли уже чат с этим клиентом
+    const existingChat = await get('SELECT * FROM chats WHERE customer_id = ?', [customer_id]);
+
+    if (existingChat) {
+      console.log('API: Чат уже существует:', existingChat.id);
+      return res.json(existingChat);
+    }
+
+    console.log('API: Создаем новый чат для клиента:', customer_name);
+    // Создаем новый чат
+    const result = await run(
+      'INSERT INTO chats (customer_id, customer_name, customer_phone, status) VALUES (?, ?, ?, ?)',
+      [customer_id, customer_name || '', customer_phone || '', 'active']
+    );
+
+    const newChat = await get('SELECT * FROM chats WHERE id = ?', [result.lastID]);
+    console.log('API: Создан чат с ID:', newChat.id);
+
+    // Отправляем WebSocket уведомление о новом чате
+    broadcast({
+      type: 'new_chat',
+      chat: newChat
+    });
+
+    res.json(newChat);
+  } catch (err) {
+    console.error('API: Error creating chat:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/chats', async (req, res) => {
   try {
     const chats = await all(`
-      SELECT 
+      SELECT
         c.id,
         c.customer_id,
         c.customer_name,
@@ -3565,6 +3856,68 @@ app.get('/api/debug/orders-feb14', async (req, res) => {
   }
 });
 
+// ============ ADMIN CUSTOMER MESSAGES ============
+
+// Получить сообщения для конкретного клиента (для админ-чата)
+app.get('/api/messages/customer/:customer_id', async (req, res) => {
+  const { customer_id } = req.params;
+  try {
+    const messages = await all('SELECT * FROM messages WHERE sender_id = ? ORDER BY timestamp ASC', [customer_id]);
+    res.json(messages);
+  } catch (err) {
+    console.error('Error fetching customer messages:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Отправить сообщение от админа клиенту
+app.post('/api/messages/admin', async (req, res) => {
+  const { customer_id, content } = req.body;
+
+  if (!customer_id || !content) {
+    return res.status(400).json({ error: 'customer_id and content are required' });
+  }
+
+  try {
+    const result = await run(
+      'INSERT INTO messages (sender_id, content, is_admin) VALUES (?, ?, ?)',
+      [customer_id, content, 1]
+    );
+
+    const message = await get('SELECT * FROM messages WHERE id = ?', [result.lastID]);
+
+    // Синхронизируем сообщение с основным сайтом
+    try {
+      const SITE_URL = process.env.SITE_URL || 'http://localhost:3001';
+      await fetch(`${SITE_URL}/api/site/messages/sync-from-frontpad`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...message,
+          customer_name: null, // Для админских сообщений
+          customer_phone: null
+        })
+      });
+      console.log(`Админ-сообщение синхронизировано с основным сайтом`);
+    } catch (syncErr) {
+      console.error('Ошибка синхронизации админ-сообщения:', syncErr.message);
+    }
+
+    // Отправляем WebSocket уведомление клиенту
+    broadcast({
+      type: 'admin_message',
+      customer_id: customer_id,
+      message: content,
+      timestamp: message.timestamp
+    });
+
+    res.json(message);
+  } catch (err) {
+    console.error('Error sending admin message:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ============ СИНХРОНИЗАЦИЯ ЗАКАЗОВ С САЙТА ============
 
 // Endpoint для синхронизации заказов с основного сайта
@@ -3704,9 +4057,17 @@ app.post('/api/site/orders/sync', async (req, res) => {
       console.log(`[NEW_ORDER] Заказ ${order_number} синхронизирован с сайта, отправлен broadcast new_order`);
       console.log(`[AUTO_PRINT] Автоматическая печать чека для синхронизированного заказа #${order.id}`);
       
-      // Проверяем настройку автопечати
-      const autoPrintSetting = await get('SELECT value FROM settings WHERE \`key\` = ?', ['auto_print_mode']);
-      const serverPrintEnabled = await get('SELECT value FROM settings WHERE \`key\` = ?', ['server_print_enabled']);
+      // Проверяем настройку автопечати (сначала для точки, затем общие)
+      let autoPrintSetting = await get('SELECT value FROM settings WHERE key = ? AND point_id = ?', ['auto_print_mode', order.point_id || 1]);
+      if (!autoPrintSetting) {
+        autoPrintSetting = await get('SELECT value FROM settings WHERE key = ? AND point_id = 0', ['auto_print_mode']);
+      }
+
+      let serverPrintEnabled = await get('SELECT value FROM settings WHERE key = ? AND point_id = ?', ['server_print_enabled', order.point_id || 1]);
+      if (!serverPrintEnabled) {
+        serverPrintEnabled = await get('SELECT value FROM settings WHERE key = ? AND point_id = 0', ['server_print_enabled']);
+      }
+
       const autoPrintMode = autoPrintSetting?.value || 'browser'; // 'browser' или 'server'
       const isServerPrintEnabled = serverPrintEnabled?.value === 'true' || process.env.SERVER_PRINT_ENABLED === 'true';
       
@@ -3715,7 +4076,7 @@ app.post('/api/site/orders/sync', async (req, res) => {
       // Серверная печать (если настроено)
       if (autoPrintMode === 'server' && isServerPrintEnabled) {
         console.log(`[SERVER_PRINT] Запуск серверной печати для заказа #${order.id}`);
-        const receiptSettings = await getReceiptSettings();
+        const receiptSettings = await getReceiptSettings(db, order.point_id || 1);
         const receiptHTML = generateReceiptHTML(order, order.items, receiptSettings);
         const printResult = printReceiptSync(receiptHTML, order.id, true); // forceEnabled = true
         console.log(`[SERVER_PRINT] Результат:`, printResult);

@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Plus, Trash2, X, Phone, MapPin, User, Search } from 'lucide-react';
+import { Plus, Trash2, X, Phone, MapPin, User, Search, MessageCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 // Используем относительный путь для работы через nginx
 const FRONTPAD_API = process.env.REACT_APP_FONTPAD_API || '';
 
 const Customers = () => {
+  const navigate = useNavigate();
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -53,6 +55,22 @@ const Customers = () => {
     } catch (error) {
       console.error('Error deleting customer:', error);
     }
+  };
+
+  const handleOpenChat = (customer) => {
+    console.log('Customers: Открываем чат с клиентом:', {
+      id: customer.id,
+      name: customer.name,
+      phone: customer.phone
+    });
+    // Переход на страницу чатов с параметром customer_id
+    navigate('/messenger', {
+      state: {
+        customerId: parseInt(customer.id),
+        customerName: customer.name,
+        customerPhone: customer.phone
+      }
+    });
   };
 
   const filteredCustomers = customers.filter(c => 
@@ -128,6 +146,13 @@ const Customers = () => {
                 <td>{new Date(customer.created_at).toLocaleDateString('ru-RU')}</td>
                 <td>
                   <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      className="btn btn-sm btn-info"
+                      onClick={() => handleOpenChat(customer)}
+                      title="Открыть чат"
+                    >
+                      <MessageCircle size={16} />
+                    </button>
                     <button className="btn btn-sm btn-danger" onClick={() => handleDelete(customer.id)}>
                       <Trash2 size={16} />
                     </button>

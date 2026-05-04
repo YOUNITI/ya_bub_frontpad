@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { Send, User, Phone, MessageCircle, X, Search } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import { playNotificationSound } from './SoundNotification';
 
 // API URLs - относительные пути для работы через nginx
@@ -9,6 +10,7 @@ const SITE_API = '';
 const WS_URL = (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.host + '/ws';
 
 const Messenger = () => {
+  const location = useLocation();
   const [chats, setChats] = useState([]);
   const [selectedChat, setSelectedChat] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -16,6 +18,7 @@ const Messenger = () => {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [pendingChatCreation, setPendingChatCreation] = useState(null);
   const messagesEndRef = useRef(null);
   const wsRef = useRef(null);
   const pollingRef = useRef(null);
@@ -23,24 +26,100 @@ const Messenger = () => {
   useEffect(() => {
     fetchChats();
     setupWebSocket();
-    
+
     // Сбрасываем счётчик непрочитанных сообщений при открытии страницы
     localStorage.setItem('messenger_opened', Date.now().toString());
     window.dispatchEvent(new Event('messenger-opened'));
-    
+
     // Polling fallback каждые 10 секунд
     pollingRef.current = setInterval(fetchChats, 10000);
-    
+
     return () => {
       if (wsRef.current) wsRef.current.close();
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
   }, []);
 
+  // Обработка параметров из URL state для автоматического открытия чата
+  useEffect(() => {
+    if (location.state?.customerId) {
+      console.log('Messenger: Обнаружены параметры для открытия чата:', location.state);
+      setPendingChatCreation({
+        customerId: parseInt(location.state.customerId),
+        customerName: location.state.customerName,
+        customerPhone: location.state.customerPhone
+      });
+      // Очищаем state, чтобы не открывать повторно
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
+
+  // Обработка создания чата после загрузки данных
+  useEffect(() => {
+    if (pendingChatCreation && !loading) {
+      console.log('Messenger: Обрабатываем отложенное создание чата:', pendingChatCreation, 'chats loaded:', chats.length);
+      const { customerId, customerName, customerPhone } = pendingChatCreation;
+
+      // Ищем существующий чат с этим клиентом
+      const existingChat = chats.find(chat => parseInt(chat.customer_id) === parseInt(customerId));
+
+      if (existingChat) {
+        console.log('Messenger: Найден существующий чат:', existingChat.id);
+        // Если чат существует, открываем его
+        setSelectedChat(existingChat);
+        fetchMessages(existingChat.id);
+      } else {
+        console.log('Messenger: Чат не найден, создаем новый для клиента:', customerName);
+        // Если чата нет, создаем новый
+        createNewChat(customerId, customerName, customerPhone);
+      }
+
+      // Очищаем pending state
+      setPendingChatCreation(null);
+    }
+  }, [pendingChatCreation, loading, chats]);
+
+  const createNewChat = async (customerId, customerName, customerPhone) => {
+    try {
+      console.log('Messenger: Отправка запроса на создание чата для клиента:', customerName, customerId);
+      // Создаем новый чат на сервере
+      const response = await axios.post(`${FRONTPAD_API}/api/chats`, {
+        customer_id: customerId,
+        customer_name: customerName,
+        customer_phone: customerPhone
+      });
+
+      const newChat = response.data;
+      console.log('Messenger: Создан новый чат:', newChat);
+
+      // Обновляем список чатов
+      setChats(prevChats => [newChat, ...prevChats]);
+
+      // Выбираем новый чат
+      setSelectedChat(newChat);
+      fetchMessages(newChat.id);
+
+      // Также обновляем список чатов через API для синхронизации
+      setTimeout(() => fetchChats(), 1000);
+    } catch (error) {
+      console.error('Messenger: Ошибка создания чата:', error);
+      // В случае ошибки, возможно, чат уже существует - попробуем найти его
+      const existingChat = chats.find(chat => chat.customer_id === customerId);
+      if (existingChat) {
+        console.log('Messenger: Найден существующий чат после ошибки создания');
+        setSelectedChat(existingChat);
+        fetchMessages(existingChat.id);
+      } else {
+        // Если чата нет и создать не удалось, показываем ошибку
+        alert('Не удалось создать чат с клиентом. Попробуйте еще раз.');
+      }
+    }
+  };
+
   const setupWebSocket = () => {
     try {
       wsRef.current = new WebSocket(WS_URL);
-      
+
       wsRef.current.onopen = () => {
         console.log('WebSocket Messenger подключен');
       };
@@ -125,11 +204,15 @@ const Messenger = () => {
 
   const fetchChats = async () => {
     try {
+      console.log('Messenger: Загружаем список чатов...');
       const response = await axios.get(`${FRONTPAD_API}/api/chats`);
-      setChats(response.data || []);
+      const chatsData = response.data || [];
+      console.log('Messenger: Загружено чатов:', chatsData.length);
+      setChats(chatsData);
     } catch (error) {
-      console.error('Error fetching chats:', error);
+      console.error('Messenger: Error fetching chats:', error);
     } finally {
+      console.log('Messenger: Завершена загрузка чатов, loading = false');
       setLoading(false);
     }
   };

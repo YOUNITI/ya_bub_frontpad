@@ -8,8 +8,8 @@ UPDATE users SET point_id = 1 WHERE username = 'admin';
 
 -- Создаем пользователя admin2 с паролем admin2 и point_id = 2
 -- Если пользователь уже существует - обновляем ему point_id
-INSERT INTO users (username, password, role, point_id) 
-VALUES ('admin2', '$2a$10$EixZaY3s72Qh15g8i0G0/.X7eK1X7Q5Z7V6U5Y4X3W2V1U0T9S8R7', 'admin', 2)
+INSERT INTO users (username, password, role, point_id, email)
+VALUES ('admin2', '$2a$10$EixZaY3s72Qh15g8i0G0/.X7eK1X7Q5Z7V6U5Y4X3W2V1U0T9S8R7', 'admin', 2, 'admin2@yabudu.local')
 ON DUPLICATE KEY UPDATE point_id = 2;
 
 -- Проверяем результат

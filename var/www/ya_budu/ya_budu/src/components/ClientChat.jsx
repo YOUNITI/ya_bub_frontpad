@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { API_BASE_URL } from '../config';
 import { useAuth } from '../context/AuthContext';
-import { useCart } from '../context/CartContext';
 import { useChat } from '../context/ChatContext';
 
 const ClientChat = () => {
@@ -12,7 +11,6 @@ const ClientChat = () => {
   const [profileData, setProfileData] = useState(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const { user } = useAuth();
-  const { items: cartItems, getTotal } = useCart();
   const messagesEndRef = useRef(null);
   const chatRef = useRef(null);
 
@@ -118,51 +116,7 @@ const ClientChat = () => {
   };
 
   const sendCart = async () => {
-    if (!user?.customer_id) {
-      alert('Пожалуйста, войдите в аккаунт, чтобы отправить корзину');
-      return;
-    }
-    
-    if (cartItems.length === 0) {
-      alert('Ваша корзина пуста!');
-      return;
-    }
-
-    const total = getTotal();
-    const cartText = cartItems.map(item => {
-      let itemText = `${item.name} x${item.quantity} - ${(Number(item.price || 0) * item.quantity).toFixed(2)} ₽`;
-      if (item.size) {
-        itemText += `\n   Размер: ${item.size.name}`;
-      }
-      if (item.addons && item.addons.length > 0) {
-        itemText += `\n   Допы: ${item.addons.map(a => a.name).join(', ')}`;
-      }
-      if (item.sizeAddons && item.sizeAddons.length > 0) {
-        itemText += `\n   + ${item.sizeAddons.map(a => a.name).join(', ')}`;
-      }
-      return itemText;
-    }).join('\n');
-    const content = `🛒 **КОРЗИНА**\n\n${cartText}\n\n**Итого: ${Number(total || 0).toFixed(2)} ₽**`;
-
-    try {
-      const formData = new FormData();
-      formData.append('content', content);
-      formData.append('is_admin', 'false');
-      formData.append('sender_id', user.customer_id);
-      formData.append('cart_data', JSON.stringify(cartItems));
-      formData.append('cart_total', total.toString());
-
-      const response = await fetch(`${API_BASE_URL}/api/messages`, {
-        method: 'POST',
-        body: formData
-      });
-
-      if (response.ok) {
-        fetchMessages();
-      }
-    } catch (error) {
-      console.error('Ошибка при отправке корзины:', error);
-    }
+    return;
   };
 
   return (
@@ -222,9 +176,8 @@ const ClientChat = () => {
               <div className="text-center text-gray-500">Загрузка...</div>
             ) : messages.length === 0 ? (
               <div className="text-center text-gray-500 text-sm">
-                <i className="fas fa-shopping-cart text-3xl mb-2 opacity-30"></i>
-                <p>Вы можете добавить товары в корзину и отправить нам корзину,</p>
-                <p>мы начнем готовить ваш заказ!</p>
+                <i className="fas fa-comments text-3xl mb-2 opacity-30"></i>
+                <p>Напишите нам, и мы ответим!</p>
               </div>
             ) : (
               messages.map(message => (
@@ -273,24 +226,6 @@ const ClientChat = () => {
             )}
             <div ref={messagesEndRef} />
           </div>
-
-          {/* Блок корзины - отдельно от поля ввода */}
-          {user && (
-            <div className="p-2 bg-yellow-50 border-t border-yellow-200">
-              <button
-                onClick={sendCart}
-                disabled={cartItems.length === 0}
-                className={`w-full py-2 px-4 rounded-lg font-bold text-sm flex items-center justify-center transition-colors ${
-                  cartItems.length > 0 
-                    ? 'bg-brand-yellow text-brand-black hover:bg-yellow-500' 
-                    : 'bg-gray-200 text-gray-500 cursor-not-allowed'
-                }`}
-              >
-                <i className="fas fa-shopping-cart mr-2"></i>
-                {cartItems.length > 0 ? `Отправить корзину (${cartItems.length} шт. - ${Number(getTotal() || 0).toFixed(2)} ₽)` : 'Корзина пуста'}
-              </button>
-            </div>
-          )}
 
           {/* Поле ввода сообщения */}
           {user ? (

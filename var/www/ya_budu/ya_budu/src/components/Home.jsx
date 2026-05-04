@@ -635,8 +635,9 @@ const Home = () => {
                     <i className="fas fa-map-marker-alt text-lg sm:text-xl"></i>
                   </div>
                   <div>
-                    <h4 className="text-base sm:text-xl font-bold mb-1">Адрес</h4>
-                    <p className="text-gray-600 text-base sm:text-lg">Профессора Малигонова 35</p>
+                    <h4 className="text-base sm:text-xl font-bold mb-1">Адреса</h4>
+                    <p className="text-gray-600 text-base sm:text-lg mb-1">Профессора Малигонова 35</p>
+                    <p className="text-gray-600 text-base sm:text-lg">ул. Мурата Ахеджака 26</p>
                   </div>
                 </div>
               </div>

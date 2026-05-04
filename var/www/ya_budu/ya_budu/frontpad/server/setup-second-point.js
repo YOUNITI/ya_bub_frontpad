@@ -89,7 +89,7 @@ async function setupSecondPoint() {
     console.log('');
     console.log('📍 Проверяю точки в системе...');
     const [points] = await connection.execute('SELECT * FROM points WHERE is_active = 1 ORDER BY id');
-    
+
     console.log('');
     console.log('✅ Точки в системе:');
     points.forEach(p => {

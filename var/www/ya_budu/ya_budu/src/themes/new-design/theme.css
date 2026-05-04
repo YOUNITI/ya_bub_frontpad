@@ -1,0 +1,207 @@
+/* Новый дизайн - тёмная тема с золотыми акцентами */
+
+:root {
+  /* Основные цвета */
+  --primary-bg: #000000;
+  --secondary-bg: #050505;
+  --accent-bg: #191919;
+  --popup-bg: #191919;
+  --popup-bg-second: linear-gradient(0deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.16)), #000000;
+
+  /* Текста */
+  --text-primary: rgba(255, 255, 255, 0.92);
+  --text-secondary: rgba(255, 255, 255, 0.5);
+  --text-light: rgba(255, 255, 255, 0.3);
+  --text-inverse: #000000;
+  --text-success: rgba(0, 131, 203, 1);
+
+  /* Интерактивные элементы */
+  --interactive-primary: rgba(221, 187, 126, 1);
+  --interactive-secondary: rgba(255, 255, 255, 0.13);
+  --interactive-dark-light: rgba(255, 255, 255, 0.3);
+  --interactive-light: rgba(255, 255, 255, 0.1);
+  --interactive-extra-light: rgba(255, 255, 255, 0.08);
+  --interactive-float-icon: rgba(61, 61, 61, 0.7);
+  --interactive-float-primary: rgba(255, 219, 153, 0.75);
+  --interactive-base-primary: #000000;
+
+  /* Акценты */
+  --accents-success: rgba(0, 131, 203, 1);
+  --accents-success-meal: rgba(221, 187, 126, 1);
+  --accents-promo: #D4B274;
+  --accents-error: #F33F3F;
+  --accents-background: rgba(5, 5, 5, 1);
+  --accents-slider-button: linear-gradient(0deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.16)), #000000;
+  --accents-popup-background: rgba(25, 25, 25, 1);
+  --accents-popup-overlay: rgba(0, 0, 0, 0.56);
+
+  /* Специальные карточки */
+  --minimal-price-bg: rgba(42, 163, 244, 0.16);
+  --minimal-price-progress: #ED6F2C;
+  --free-delivery-bg: rgba(42, 163, 244, 0.16);
+  --free-delivery-progress: #2CC6CE;
+  --gift-bg: rgba(238, 207, 99, 0.2);
+  --gift-progress: #FFDE69;
+
+  /* Границы и радиусы */
+  --button-large-radius: 16px;
+  --button-small-radius: 12px;
+  --popup-radius: 20px;
+  --input-radius: 6px;
+  --banner-radius: 10px;
+  --round-button-radius: 50%;
+
+  /* Тени */
+  --shadow-default: 0 0 1px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-sidebar: -1px 0 0 rgba(255, 255, 255, 0.08);
+  --shadow-category-slider: 0px 1px 0px rgba(255, 255, 255, 0.08);
+
+  /* Типографика */
+  --h1-weight: 700;
+  --h1-size: 56px;
+  --h1-size-mobile: 30px;
+  --h1-size-tablet: 32px;
+  --h1-size-desktop: 40px;
+  --h1-size-large: 48px;
+  --h1-line-height: 110%;
+  --h1-transform: uppercase;
+
+  --h2-weight: 700;
+  --h2-size: 28px;
+  --h2-size-mobile: 21px;
+  --h2-line-height: 32px;
+  --h2-line-height-mobile: 24px;
+  --h2-transform: uppercase;
+
+  --h3-weight: 700;
+  --h3-size: 21px;
+  --h3-line-height: 24px;
+  --h3-transform: uppercase;
+}
+
+/* Темная тема для body */
+.new-design-theme {
+  background-color: var(--primary-bg);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+}
+
+/* Переходы для плавного переключения */
+.new-design-theme * {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+/* Кнопки */
+.new-design-button-primary {
+  background: var(--interactive-primary);
+  color: var(--text-inverse);
+  border-radius: var(--button-large-radius);
+  border: none;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.new-design-button-primary:hover {
+  background: rgba(221, 187, 126, 0.8);
+  transform: translateY(-1px);
+}
+
+.new-design-button-secondary {
+  background: var(--interactive-secondary);
+  color: var(--text-primary);
+  border-radius: var(--button-small-radius);
+  border: 1px solid var(--interactive-dark-light);
+}
+
+.new-design-button-secondary:hover {
+  background: var(--interactive-dark-light);
+}
+
+/* Карточки */
+.new-design-card {
+  background: var(--accent-bg);
+  border-radius: var(--popup-radius);
+  box-shadow: var(--shadow-default);
+}
+
+/* Инпуты */
+.new-design-input {
+  background: var(--interactive-light);
+  border: 1px solid var(--interactive-dark-light);
+  border-radius: var(--input-radius);
+  color: var(--text-primary);
+  padding: 12px 16px;
+}
+
+.new-design-input:focus {
+  border-color: var(--interactive-primary);
+  outline: none;
+}
+
+/* Попапы */
+.new-design-popup {
+  background: var(--popup-bg);
+  border-radius: var(--popup-radius);
+  box-shadow: var(--shadow-default);
+}
+
+/* Навигация */
+.new-design-nav {
+  background: var(--secondary-bg);
+  border-bottom: 1px solid var(--interactive-light);
+}
+
+/* Заголовки */
+.new-design-h1 {
+  font-weight: var(--h1-weight);
+  font-size: var(--h1-size);
+  line-height: var(--h1-line-height);
+  text-transform: var(--h1-transform);
+  color: var(--text-primary);
+}
+
+.new-design-h2 {
+  font-weight: var(--h2-weight);
+  font-size: var(--h2-size);
+  line-height: var(--h2-line-height);
+  text-transform: var(--h2-transform);
+  color: var(--text-primary);
+}
+
+.new-design-h3 {
+  font-weight: var(--h3-weight);
+  font-size: var(--h3-size);
+  line-height: var(--h3-line-height);
+  text-transform: var(--h3-transform);
+  color: var(--text-primary);
+}
+
+/* Адаптивность */
+@media (max-width: 768px) {
+  .new-design-h1 {
+    font-size: var(--h1-size-mobile);
+  }
+
+  .new-design-h2 {
+    font-size: var(--h2-size-mobile);
+    line-height: var(--h2-line-height-mobile);
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+  .new-design-h1 {
+    font-size: var(--h1-size-tablet);
+  }
+}
+
+@media (min-width: 1025px) and (max-width: 1440px) {
+  .new-design-h1 {
+    font-size: var(--h1-size-desktop);
+  }
+}
+
+@media (min-width: 1441px) {
+  .new-design-h1 {
+    font-size: var(--h1-size-large);
+  }
+}

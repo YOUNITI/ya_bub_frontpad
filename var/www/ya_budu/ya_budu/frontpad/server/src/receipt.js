@@ -45,22 +45,26 @@ const DEFAULT_RECEIPT_SETTINGS = {
 };
 
 // Получить настройки чека (объединяет настройки из БД с умолчаниями)
-async function getReceiptSettings(db) {
+async function getReceiptSettings(db, pointId = 0) {
   try {
     if (!db) return DEFAULT_RECEIPT_SETTINGS;
-    
+
     const settings = {};
     const keys = Object.keys(DEFAULT_RECEIPT_SETTINGS);
-    
+
     for (const key of keys) {
       try {
-        const result = await db.get(`SELECT value FROM settings WHERE \`key\` = ?`, [key]);
+        // Сначала ищем настройку для конкретной точки, затем общую (point_id = 0)
+        let result = await db.get(`SELECT value FROM settings WHERE \`key\` = ? AND point_id = ?`, [key, pointId]);
+        if (!result) {
+          result = await db.get(`SELECT value FROM settings WHERE \`key\` = ? AND point_id = 0`, [key]);
+        }
         settings[key] = result?.value || DEFAULT_RECEIPT_SETTINGS[key];
       } catch (e) {
         settings[key] = DEFAULT_RECEIPT_SETTINGS[key];
       }
     }
-    
+
     return settings;
   } catch (e) {
     console.log('[Receipt] Ошибка получения настроек:', e.message);
